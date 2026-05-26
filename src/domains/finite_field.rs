@@ -1423,6 +1423,395 @@ impl Field for FiniteField<Two> {
     }
 }
 
+/// The 32-bit Mersenne prime 2^31 -1.
+///
+/// Can be used for faster finite field arithmetic
+/// w.r.t using Montgomery numbers.
+#[derive(Copy, Clone, Hash, Eq, PartialEq)]
+pub struct Mersenne32(u32);
+
+impl Default for Mersenne32 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Mersenne32 {
+    pub fn new() -> Self {
+        Mersenne32(Self::PRIME)
+    }
+
+    const SHIFT: u8 = 31;
+    pub const PRIME: u32 = (1 << Mersenne32::SHIFT) - 1;
+}
+
+impl std::fmt::Debug for Mersenne32 {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&self.0, f)
+    }
+}
+
+impl Display for Mersenne32 {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl FiniteFieldWorkspace for Mersenne32 {
+    fn get_large_prime() -> Mersenne32 {
+        Mersenne32(Self::PRIME)
+    }
+
+    fn try_from_integer(n: Integer) -> Option<Self> {
+        if n <= Self::PRIME {
+            match n {
+                Integer::Single(s) => {
+                    if s >= 0 {
+                        Some(Mersenne32(s as u32))
+                    } else {
+                        None
+                    }
+                }
+                Integer::Double(d) => {
+                    if d >= 0 {
+                        Some(Mersenne32(d as u32))
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            }
+        } else {
+            None
+        }
+    }
+
+    fn to_integer(&self) -> Integer {
+        self.0.into()
+    }
+}
+
+impl FiniteFieldCore<Mersenne32> for FiniteField<Mersenne32> {
+    fn new(p: Mersenne32) -> Self {
+        FiniteField {
+            p,
+            m: p,
+            r_mask: Mersenne32(0),
+            r2: Mersenne32(1),
+            r_bits: 31,
+            one: FiniteFieldElement(Mersenne32(1)),
+            is_prime: true,
+        }
+    }
+
+    fn get_prime(&self) -> Mersenne32 {
+        Mersenne32(Mersenne32::PRIME)
+    }
+
+    fn to_element(&self, a: Mersenne32) -> Self::Element {
+        if a.0 >= Mersenne32::PRIME {
+            a.0 - Mersenne32::PRIME
+        } else {
+            a.0
+        }
+    }
+
+    fn from_element(&self, a: &Self::Element) -> Mersenne32 {
+        Mersenne32(*a)
+    }
+
+    fn to_integer(&self, a: &Self::Element) -> Integer {
+        self.from_element(a).0.into()
+    }
+}
+
+impl Set for FiniteField<Mersenne32> {
+    type Element = u32;
+
+    fn size(&self) -> Option<Integer> {
+        Some(Mersenne32::PRIME.into())
+    }
+}
+
+impl RingOps<u32> for FiniteField<Mersenne32> {
+    #[inline(always)]
+    fn add(&self, a: Self::Element, b: Self::Element) -> Self::Element {
+        let mut sum = a + b; // cannot overflow
+        if sum >= Mersenne32::PRIME {
+            sum -= Mersenne32::PRIME;
+        }
+        sum
+    }
+
+    #[inline(always)]
+    fn sub(&self, a: Self::Element, b: Self::Element) -> Self::Element {
+        if a >= b {
+            a - b
+        } else {
+            a + (Mersenne32::PRIME - b)
+        }
+    }
+
+    #[inline(always)]
+    fn mul(&self, a: Self::Element, b: Self::Element) -> Self::Element {
+        let v = a as u64 * b as u64;
+        let q = (v >> Mersenne32::SHIFT) as u32;
+        let r = (v as u32 & Mersenne32::PRIME) + (q & Mersenne32::PRIME);
+
+        if r >= Mersenne32::PRIME {
+            r - Mersenne32::PRIME
+        } else {
+            r
+        }
+    }
+
+    #[inline]
+    fn add_assign(&self, a: &mut Self::Element, b: Self::Element) {
+        *a = self.add(*a, b);
+    }
+
+    #[inline]
+    fn sub_assign(&self, a: &mut Self::Element, b: Self::Element) {
+        *a = self.sub(*a, b);
+    }
+
+    #[inline]
+    fn mul_assign(&self, a: &mut Self::Element, b: Self::Element) {
+        *a = self.mul(*a, b);
+    }
+
+    fn add_mul_assign(&self, a: &mut Self::Element, b: Self::Element, c: Self::Element) {
+        self.add_assign(a, &self.mul(b, c));
+    }
+
+    fn sub_mul_assign(&self, a: &mut Self::Element, b: Self::Element, c: Self::Element) {
+        self.sub_assign(a, &self.mul(b, c));
+    }
+
+    /// Computes -x mod n.
+    #[inline]
+    fn neg(&self, a: Self::Element) -> Self::Element {
+        if a == 0 { a } else { Mersenne32::PRIME - a }
+    }
+}
+
+impl RingOps<&u32> for FiniteField<Mersenne32> {
+    #[inline(always)]
+    fn add(&self, a: &Self::Element, b: &Self::Element) -> Self::Element {
+        let mut sum = a + b; // cannot overflow
+        if sum >= Mersenne32::PRIME {
+            sum -= Mersenne32::PRIME;
+        }
+        sum
+    }
+
+    #[inline(always)]
+    fn sub(&self, a: &Self::Element, b: &Self::Element) -> Self::Element {
+        if *a >= *b {
+            *a - *b
+        } else {
+            *a + (Mersenne32::PRIME - *b)
+        }
+    }
+
+    #[inline(always)]
+    fn mul(&self, a: &Self::Element, b: &Self::Element) -> Self::Element {
+        let v = *a as u64 * *b as u64;
+        let q = (v >> Mersenne32::SHIFT) as u32;
+        let r = (v as u32 & Mersenne32::PRIME) + (q & Mersenne32::PRIME);
+
+        if r >= Mersenne32::PRIME {
+            r - Mersenne32::PRIME
+        } else {
+            r
+        }
+    }
+
+    #[inline]
+    fn add_assign(&self, a: &mut Self::Element, b: &Self::Element) {
+        *a = self.add(*a, *b);
+    }
+
+    #[inline]
+    fn sub_assign(&self, a: &mut Self::Element, b: &Self::Element) {
+        *a = self.sub(*a, *b);
+    }
+
+    #[inline]
+    fn mul_assign(&self, a: &mut Self::Element, b: &Self::Element) {
+        *a = self.mul(*a, *b);
+    }
+
+    fn add_mul_assign(&self, a: &mut Self::Element, b: &Self::Element, c: &Self::Element) {
+        self.add_assign(a, self.mul(b, c));
+    }
+
+    fn sub_mul_assign(&self, a: &mut Self::Element, b: &Self::Element, c: &Self::Element) {
+        self.sub_assign(a, self.mul(b, c));
+    }
+
+    /// Computes -x mod n.
+    #[inline]
+    fn neg(&self, a: &Self::Element) -> Self::Element {
+        if *a == 0 { *a } else { Mersenne32::PRIME - a }
+    }
+}
+
+impl Ring for FiniteField<Mersenne32> {
+    #[inline]
+    fn zero(&self) -> Self::Element {
+        0
+    }
+
+    /// Return the unit element in Montgomory form.
+    #[inline]
+    fn one(&self) -> Self::Element {
+        1
+    }
+
+    #[inline]
+    fn nth(&self, n: Integer) -> Self::Element {
+        self.to_element(Mersenne32(n.to_finite_field(self)))
+    }
+
+    /// Compute b^e % n.
+    #[inline]
+    fn pow(&self, b: &Self::Element, mut e: u64) -> Self::Element {
+        let p_minus_1 = self.get_prime().0 as u64 - 1;
+        if e >= p_minus_1 {
+            e %= p_minus_1;
+        }
+
+        if e == 0 {
+            return self.one();
+        }
+
+        let mut x = *b;
+        let mut y = self.one();
+        while e != 1 {
+            if e % 2 == 1 {
+                y = self.mul(&y, &x);
+            }
+
+            x = self.mul(&x, &x);
+            e /= 2;
+        }
+
+        self.mul(&x, &y)
+    }
+
+    #[inline]
+    fn is_zero(&self, a: &Self::Element) -> bool {
+        *a == 0
+    }
+
+    #[inline]
+    fn is_one(&self, a: &Self::Element) -> bool {
+        *a == 1
+    }
+
+    fn one_is_gcd_unit() -> bool {
+        true
+    }
+
+    fn characteristic(&self) -> Integer {
+        Mersenne32::PRIME.into()
+    }
+
+    fn try_inv(&self, a: &Self::Element) -> Option<Self::Element> {
+        if *a == 0 { None } else { Some(self.inv(a)) }
+    }
+
+    fn try_div(&self, a: &Self::Element, b: &Self::Element) -> Option<Self::Element> {
+        if self.is_zero(b) {
+            None
+        } else {
+            Some(self.div(a, b))
+        }
+    }
+
+    fn sample(&self, rng: &mut impl rand::RngCore, range: (i64, i64)) -> Self::Element {
+        let r = rng.random_range(
+            range.0.max(0)..range.1.min(Mersenne32::PRIME as i64),
+        );
+        r as u32
+    }
+
+    fn format<W: std::fmt::Write>(
+        &self,
+        element: &Self::Element,
+        opts: &PrintOptions,
+        state: PrintState,
+        f: &mut W,
+    ) -> Result<bool, Error> {
+        if opts.symmetric_representation_for_finite_field {
+            Z.format(&self.to_symmetric_integer(element), opts, state, f)
+        } else {
+            Z.format(&self.from_element(element).0.into(), opts, state, f)
+        }
+    }
+}
+
+impl EuclideanDomain for FiniteField<Mersenne32> {
+    #[inline]
+    fn rem(&self, _: &Self::Element, _: &Self::Element) -> Self::Element {
+        0
+    }
+
+    #[inline]
+    fn quot_rem(&self, a: &Self::Element, b: &Self::Element) -> (Self::Element, Self::Element) {
+        (self.mul(a, &self.inv(b)), 0)
+    }
+
+    #[inline]
+    fn gcd(&self, _: &Self::Element, _: &Self::Element) -> Self::Element {
+        1
+    }
+}
+
+impl Field for FiniteField<Mersenne32> {
+    #[inline]
+    fn div(&self, a: &Self::Element, b: &Self::Element) -> Self::Element {
+        self.mul(a, &self.inv(b))
+    }
+
+    #[inline]
+    fn div_assign(&self, a: &mut Self::Element, b: &Self::Element) {
+        *a = self.mul(*a, self.inv(b));
+    }
+
+    /// Computes x^-1 mod n.
+    fn inv(&self, a: &Self::Element) -> Self::Element {
+        assert!(*a != 0, "0 is not invertible");
+
+        // extended Euclidean algorithm: a x + b p = gcd(x, p) = 1 or a x = 1 (mod p)
+        //work with u64 since q*v1 in the loop might overflow otherwise
+        let mut u1: u64 = 1;
+        let mut u3 = *a as u64;
+        let mut v1: u64 = 0;
+        let mut v3 = Mersenne32::PRIME as u64;
+        let mut even_iter: bool = true;
+
+        while v3 != 0 {
+            let q = u3 / v3;
+            let t3 = u3 % v3;
+            let t1 = u1 + q * v1;
+            u1 = v1;
+            v1 = t1;
+            u3 = v3;
+            v3 = t3;
+            even_iter = !even_iter;
+        }
+
+        debug_assert!(u3 == 1);
+        if even_iter {
+            u1 as u32
+        } else {
+            Mersenne32::PRIME - u1 as u32
+        }
+    }
+}
+
 /// The 64-bit Mersenne prime 2^61 -1.
 ///
 /// Can be used for faster finite field arithmetic

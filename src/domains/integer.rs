@@ -21,8 +21,8 @@ use crate::{
 use super::{
     EuclideanDomain, Field, InternalOrdering, Ring, SelfRing,
     finite_field::{
-        FiniteField, FiniteFieldCore, FiniteFieldElement, FiniteFieldWorkspace, Mersenne64,
-        PrimeIteratorU64, ToFiniteField, Two, Z2, Zp, Zp64,
+        FiniteField, FiniteFieldCore, FiniteFieldElement, FiniteFieldWorkspace, Mersenne32,
+        Mersenne64, PrimeIteratorU64, ToFiniteField, Two, Z2, Zp, Zp64,
     },
     float::{FloatField, FloatLike, Real, RealLike, SingleFloat},
     rational::Rational,
@@ -639,6 +639,19 @@ impl ToFiniteField<Integer> for Integer {
     }
 }
 
+impl ToFiniteField<Mersenne32> for Integer {
+    fn to_finite_field(
+        &self,
+        _field: &FiniteField<Mersenne32>,
+    ) -> <FiniteField<Mersenne32> as Set>::Element {
+        match self {
+            &Integer::Single(n) => n.rem_euclid(Mersenne32::PRIME as i64) as u32,
+            &Integer::Double(n) => n.rem_euclid(Mersenne32::PRIME as i128) as u32,
+            Integer::Large(r) => r.rem_euc(Mersenne64::PRIME).complete().to_u32().unwrap(),
+        }
+    }
+}
+
 impl ToFiniteField<Mersenne64> for Integer {
     fn to_finite_field(
         &self,
@@ -690,6 +703,16 @@ impl FromFiniteField<u64> for Integer {
         } else {
             Integer::Double(r as i128)
         }
+    }
+}
+
+impl FromFiniteField<Mersenne32> for Integer {
+    fn from_finite_field(_field: &FiniteField<Mersenne32>, element: u32) -> Self {
+        Integer::Single(element as i64)
+    }
+
+    fn from_prime(_field: &FiniteField<Mersenne32>) -> Self {
+        Integer::Single(Mersenne32::PRIME as i64)
     }
 }
 
