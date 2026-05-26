@@ -50,6 +50,7 @@ macro_rules! impl_internal_ordering {
 }
 
 impl_internal_ordering!(u8);
+impl_internal_ordering!(u32);
 impl_internal_ordering!(u64);
 
 macro_rules! impl_internal_ordering_range {
