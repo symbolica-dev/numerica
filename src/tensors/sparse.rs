@@ -866,6 +866,14 @@ impl<F: Ring> SparseMatrix<F> {
         self.col_idcs = new_col_idcs;
         self.row_idcs = new_row_idcs;
     }
+
+    /// Get an iterator over the rows of the matrix.
+    pub fn row_iter(&self) -> SparseMatrixRowIterator<'_, F> {
+        SparseMatrixRowIterator {
+            matrix: self,
+            row: 0
+        }
+    }
 }
 
 impl<F: Field> SparseMatrix<F> {
@@ -1345,6 +1353,31 @@ impl<F: Ring> MulAssign<&SparseMatrix<F>> for SparseMatrix<F> {
     /// Multiply two sparse matrices in place
     fn mul_assign(&mut self, rhs: &SparseMatrix<F>) {
         *self = &*self * rhs;
+    }
+}
+
+pub struct SparseMatrixRowIterator<'a, F: Ring> {
+    matrix: &'a SparseMatrix<F>,
+    row: u32,
+}
+
+impl<'a, F: Ring> Iterator for SparseMatrixRowIterator<'a, F> {
+    /// (row_idx, col_idcs, _values)
+    type Item = (u32, &'a [u32], &'a [F::Element]);
+
+    /// Iterate over the rows of the matrix.
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.row < self.matrix.nrows {
+            let row_start = self.matrix.row_idcs[self.row as usize];
+            let row_end = self.matrix.row_idcs[(self.row + 1) as usize];
+            
+            //move to next row
+            self.row += 1;
+
+            Some((self.row - 1, &self.matrix.col_idcs[row_start..row_end], &self.matrix.values[row_start..row_end]))
+        } else {
+            None
+        }
     }
 }
 
@@ -2529,5 +2562,37 @@ mod tests {
         let inv = mat.inv().unwrap();
 
         assert_eq!(&mat * &inv, SparseMatrix::identity(5, Q));
+    }
+
+    #[test]
+    fn row_iter() {
+        // sparse 5x5 matrix triplets
+        let triplets = vec![
+            // row, col, entry
+            (0, 0, 1.into()),
+            (0, 2, 2.into()),
+            (1, 1, 1.into()),
+            (1, 3, 3.into()),
+            (2, 2, 1.into()),
+            (2, 4, 4.into()),
+            (3, 3, 1.into()),
+            (4, 0, 2.into()),
+            (4, 4, 1.into()),
+        ];
+
+        let mat = SparseMatrix::from_triplets(5, 5, triplets, Q);
+
+        let mut count_entries = 0;
+        let mut count_rows = 0;
+        for (idx, row) in mat.row_iter().enumerate() {
+            count_rows += 1;
+            assert_eq!(idx, row.0 as usize);
+            assert_eq!(row.1.len(), row.2.len());
+            count_entries += row.1.len();
+        }
+
+        assert_eq!(count_entries, 9);
+        assert_eq!(count_rows, 5);
+                                                      
     }
 }
