@@ -229,7 +229,7 @@ impl<F: Ring> std::fmt::Display for SparseMatrixError<F> {
 
 /// A sparse matrix in compressed sparse row (CSR) format.
 ///
-/// We keep each row sorted at all times.
+/// We keep the col_idcs of each row sorted at all times.
 #[derive(Clone, Hash, PartialEq, Eq, Debug)]
 pub struct SparseMatrix<F: Ring> {
     /// The non-zero entries of the matrix sorted by row and column
@@ -722,6 +722,20 @@ impl<F: Ring> SparseMatrix<F> {
         ret
     }
 
+    /// Get the last row of the matrix
+    ///
+    /// Returns (row_idx, col_idcs, values)
+    pub fn last_row(&self) -> Option<(u32, &[u32], &[F::Element])> {
+        if self.nrows == 0 {
+            None
+        } else {
+            let row_start = self.row_idcs[self.row_idcs.len() - 1] as usize;
+            let row_end = self.row_idcs[self.row_idcs.len() - 2] as usize;
+
+            Some((self.nrows - 1, &self.col_idcs[row_start..row_end], &self.values[row_start..row_end]))
+        }
+    }
+
     /// Extract the last column of the matrix, sorted by the corresponding pivot column.
     ///
     /// # Arguments
@@ -868,6 +882,8 @@ impl<F: Ring> SparseMatrix<F> {
     }
 
     /// Get an iterator over the rows of the matrix.
+    ///
+    /// It iterates over tuples of the form: (row_idx, col_idcs, values)
     pub fn row_iter(&self) -> SparseMatrixRowIterator<'_, F> {
         SparseMatrixRowIterator {
             matrix: self,
@@ -1362,7 +1378,7 @@ pub struct SparseMatrixRowIterator<'a, F: Ring> {
 }
 
 impl<'a, F: Ring> Iterator for SparseMatrixRowIterator<'a, F> {
-    /// (row_idx, col_idcs, _values)
+    /// (row_idx, col_idcs, values)
     type Item = (u32, &'a [u32], &'a [F::Element]);
 
     /// Iterate over the rows of the matrix.
@@ -1587,6 +1603,24 @@ impl<F: Field> Gplu<F> {
 
         //run next gplu step
         self.gplu_row(values, col_idcs)
+    }
+
+    /// Adds all the rows of the given matrix to the system and processes one by one in the GPLU algorithm.
+    ///
+    /// A GPLU step is essentially the forward solving of the whole system added until now.
+    /// # Parameters
+    /// * `rows` - the matrix whose rows shall be added to the system.
+    ///
+    /// # Return
+    /// For reach row: If the row is linearly independent of the rest of the system it returns the pivot column index
+    /// of the new row after the GPLU step, otherwise None.
+    pub fn add_rows(&mut self, rows: &SparseMatrix<F>) -> Vec<Option<u32>> {
+        let mut ret = Vec::with_capacity(rows.nrows() as usize);
+        for (_, col_idcs, values)  in rows.row_iter() {
+            ret.push(self.add_row(&values, &col_idcs));
+        }
+
+        ret
     }
 
     /// Adds empty columns to the U matrix and updates the pivots accordingly.
