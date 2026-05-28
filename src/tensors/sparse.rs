@@ -279,6 +279,62 @@ impl<'a, F: Ring> Iterator for SparseMatrixIterator<'a, F> {
     }
 }
 
+pub struct SparseMatrixRowIterator<'a, F: Ring> {
+    /// The matrix we are iterating over.
+    matrix: &'a SparseMatrix<F>,
+    /// The next row
+    row: u32,
+    /// After the end row (needed for DoubleEndedIterator)
+    end_row: u32,
+}
+
+impl<'a, F: Ring> Iterator for SparseMatrixRowIterator<'a, F> {
+    /// (row_idx, col_idcs, values)
+    type Item = (u32, &'a [u32], &'a [F::Element]);
+
+    /// Iterate over the rows of the matrix.
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.row < self.end_row {
+            let row = self.row;
+            
+            let row_start = self.matrix.row_idcs[row as usize];
+            let row_end = self.matrix.row_idcs[(row + 1) as usize];
+            
+            //move to next row
+            self.row += 1;
+
+            Some((
+                row,
+                &self.matrix.col_idcs[row_start..row_end],
+                &self.matrix.values[row_start..row_end]
+            ))
+        } else {
+            None
+        }
+    }
+}
+
+impl<'a, F: Ring> DoubleEndedIterator for SparseMatrixRowIterator<'a, F> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        if self.row < self.end_row {
+            self.end_row -= 1;
+
+            let row = self.end_row;
+
+            let row_start = self.matrix.row_idcs[row as usize];
+            let row_end = self.matrix.row_idcs[(row + 1) as usize];
+
+            Some((
+                row,
+                &self.matrix.col_idcs[row_start..row_end],
+                &self.matrix.values[row_start..row_end],
+            ))
+        } else {
+            None
+        }
+    }
+}
+
 impl<'a, F: Ring> IntoIterator for &'a SparseMatrix<F> {
     type Item = (u32, u32, &'a F::Element);
     type IntoIter = SparseMatrixIterator<'a, F>;
@@ -887,7 +943,8 @@ impl<F: Ring> SparseMatrix<F> {
     pub fn row_iter(&self) -> SparseMatrixRowIterator<'_, F> {
         SparseMatrixRowIterator {
             matrix: self,
-            row: 0
+            row: 0,
+            end_row: self.nrows(),
         }
     }
 }
@@ -1372,30 +1429,7 @@ impl<F: Ring> MulAssign<&SparseMatrix<F>> for SparseMatrix<F> {
     }
 }
 
-pub struct SparseMatrixRowIterator<'a, F: Ring> {
-    matrix: &'a SparseMatrix<F>,
-    row: u32,
-}
 
-impl<'a, F: Ring> Iterator for SparseMatrixRowIterator<'a, F> {
-    /// (row_idx, col_idcs, values)
-    type Item = (u32, &'a [u32], &'a [F::Element]);
-
-    /// Iterate over the rows of the matrix.
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.row < self.matrix.nrows {
-            let row_start = self.matrix.row_idcs[self.row as usize];
-            let row_end = self.matrix.row_idcs[(self.row + 1) as usize];
-            
-            //move to next row
-            self.row += 1;
-
-            Some((self.row - 1, &self.matrix.col_idcs[row_start..row_end], &self.matrix.values[row_start..row_end]))
-        } else {
-            None
-        }
-    }
-}
 
 /// An option for `Gplu` of how to handle the L matrix
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
