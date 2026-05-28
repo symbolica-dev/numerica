@@ -913,6 +913,7 @@ impl<F: Ring> SparseMatrix<F> {
 
     /// Sorts the rows of the matrix by their pivot column.
     ///
+    /// The matrix must be forward solved, e.g. with the [`Gplu`] reducer, which also provides the `pivots` object.
     /// # Arguments
     /// * `pivots` - The pivot positions for each column, i.e. there is a pivot on column `j` and row `pivots[j]`.
     pub fn sort_rows_by_pivot(&mut self, pivots: &Vec<Option<u32>>) {
