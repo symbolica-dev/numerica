@@ -785,8 +785,8 @@ impl<F: Ring> SparseMatrix<F> {
         if self.nrows == 0 {
             None
         } else {
-            let row_start = self.row_idcs[self.row_idcs.len() - 1] as usize;
-            let row_end = self.row_idcs[self.row_idcs.len() - 2] as usize;
+            let row_start = self.row_idcs[self.row_idcs.len() - 2] as usize;
+            let row_end = self.row_idcs[self.row_idcs.len() - 1] as usize;
 
             Some((self.nrows - 1, &self.col_idcs[row_start..row_end], &self.values[row_start..row_end]))
         }
