@@ -1592,8 +1592,6 @@ impl<F: Field> SparseRowReducer<F> {
         //clear L
         self.clear_l();
 
-        println!("serial: {}", self.u.fmt_mma());
-
         let ncols = self.u.ncols;
         let mut new_u = SparseMatrix::new(0, ncols, self.u.field.clone());
         let mut new_pivots = vec![None; ncols as usize];
@@ -1977,8 +1975,6 @@ where
     pub fn back_substitute_parallel(&mut self) {
         self.clear_l();
 
-        println!("parallel: {}", self.u.fmt_mma());
-        
         if self.u.nrows == 0 {
             return;
         }
