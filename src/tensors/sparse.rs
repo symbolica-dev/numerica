@@ -560,6 +560,21 @@ impl<F: Ring> SparseMatrix<F> {
         self.values.len()
     }
 
+    /// Access the values vector.
+    pub fn values(&self) -> &Vec<F::Element> {
+        &self.values
+    }
+
+    /// Access the column indices vector.
+    pub fn col_idcs(&self) -> &Vec<u32> {
+        &self.col_idcs
+    }
+
+    /// Access the row pointer vector.
+    pub fn row_ptrs(&self) -> &Vec<usize> {
+        &self.row_idcs
+    }
+
     /// Multiply the scalar `e` to each entry of the matrix
     pub fn mul_scalar(&self, el: &F::Element) -> SparseMatrix<F> {
         let mut ret = SparseMatrix {
