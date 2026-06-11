@@ -1529,6 +1529,16 @@ impl<F: Field> SparseRowReducer<F> {
         ret.add_matrix(mat);
         ret
     }
+
+    /// Construct a new row reducer that immediately forward solves the given matrix.
+    ///
+    /// This version also performs back substitution on every new row during the forward solving.
+    pub fn from_matrix_with_back_subs(mat: &SparseMatrix<F>, mode: LuLMode) -> Self {
+        let mut ret = Self::new(mat.ncols(), mat.field().clone(), mode);
+
+        ret.add_matrix_with_back_subs(mat);
+        ret
+    }
     
     /// Construct a new row reducer that immediately forward solves the given matrix and checks for consistency at each step.
     ///
@@ -1561,6 +1571,38 @@ impl<F: Field> SparseRowReducer<F> {
         Some(ret)
     }
 
+    /// Construct a new row reducer that immediately forward solves the given matrix and checks for consistency at each step.
+    ///
+    /// Checking for consistency means that we return None whenever a new row in `U` is all zero except the last entry.
+    /// The idea is that we decompose the matrix `(A|b)` for solving the system `A * x = b`, which becomes unsolvable in this case.
+    /// This version also performs back substitution on every new row during the forward solving.
+    pub fn from_matrix_checked_with_back_subs(mat: &SparseMatrix<F>, mode: LuLMode) -> Option<Self> {
+        let mut ret = Self {
+            u: SparseMatrix::new(0, mat.ncols(), mat.field().clone()),
+            l: SparseMatrix::new(0, 0, mat.field().clone()),
+            pivots: vec![None; mat.ncols() as usize],
+            mode: mode,
+            scratch: Scratch::new(mat.ncols(), mat.field()),
+        };
+
+        for row in mat.row_ptrs.windows(2) {
+            if let Some(_) = ret.forward_solve_row_with_back_subs(&mat.values[row[0]..row[1]], &mat.col_idcs[row[0]..row[1]]) {
+                //check last, just added, row for inconsistency
+                let start = ret.u.row_ptrs[(ret.u.nrows - 1) as usize];
+                let end = ret.u.row_ptrs[ret.u.nrows as usize];
+                if end - start == 1
+                    && ret.u.col_idcs[start as usize] + 1 == ret.u.ncols
+                    && ret.u.field.is_zero(&ret.u.values[start as usize])
+                {
+                    //row has only one entry and it's on the last column
+                    return None;
+                }
+            }
+        }
+
+        Some(ret)
+    }
+
     /// Construct a new row reducer that immediately forward solves the given matrix and stops when a linearly dependent row is found.
     ///
     /// Checking for consistency means that we return None whenever a new row in `U` is all zero except the last entry.
@@ -1577,6 +1619,35 @@ impl<F: Field> SparseRowReducer<F> {
         for row in mat.row_ptrs.windows(2) {
             if ret
                 .forward_solve_row(
+                    &mat.values[row[0]..row[1]],
+                    &mat.col_idcs[row[0]..row[1]],
+                )
+                .is_none()
+            {
+                return None;
+            }
+        }
+
+        Some(ret)
+    }
+
+    /// Construct a new row reducer that immediately forward solves the given matrix and stops when a linearly dependent row is found.
+    ///
+    /// Checking for consistency means that we return None whenever a new row in `U` is all zero except the last entry.
+    /// The idea is that we decompose the matrix `(A|b)` for solving the system `A * x = b`, which becomes unsolvable in this case.
+    /// This version also performs back substitution on every new row during the forward solving.
+    pub fn from_matrix_check_dependent_with_back_subs(mat: &SparseMatrix<F>, mode: LuLMode) -> Option<Self> {
+        let mut ret = Self {
+            u: SparseMatrix::new(0, mat.ncols(), mat.field().clone()),
+            l: SparseMatrix::new(0, 0, mat.field().clone()),
+            pivots: vec![None; mat.ncols() as usize],
+            mode: mode,
+            scratch: Scratch::new(mat.ncols(), mat.field()),
+        };
+
+        for row in mat.row_ptrs.windows(2) {
+            if ret
+                .forward_solve_row_with_back_subs(
                     &mat.values[row[0]..row[1]],
                     &mat.col_idcs[row[0]..row[1]],
                 )
@@ -1639,6 +1710,25 @@ impl<F: Field> SparseRowReducer<F> {
         self.forward_solve_row(values, col_idcs)
     }
 
+    /// Adds a new row to the system and processes it in the next forward solving step.
+    ///
+    /// This version also performs as much back substitution as possible on the new row.
+    ///
+    /// # Parameters
+    /// * `values` - the values of the non-zero entries of the row
+    /// * `col_idcs` - the column indices of the non-zero entries of the row
+    ///
+    /// # Return
+    /// If the new row is linearly independent from the rows of the current system it returns the pivot column index
+    /// of the new row after the row reduction step, otherwise None.
+    /// Note linearly dependent rows are not added to the system.
+    pub fn add_row_with_back_subs(&mut self, values: &[F::Element], col_idcs: &[u32]) -> Option<u32> {
+        assert_eq!(values.len(), col_idcs.len());
+
+        //run next forward solving step
+        self.forward_solve_row_with_back_subs(values, col_idcs)
+    }
+
     /// Adds all the rows from the matrix to the system and processes them in the next forward solving step.
     ///
     /// # Parameters
@@ -1648,6 +1738,20 @@ impl<F: Field> SparseRowReducer<F> {
 
         for row in mat.row_ptrs.windows(2) {
             self.forward_solve_row(&mat.values[row[0]..row[1]], &mat.col_idcs[row[0]..row[1]]);
+        }
+    }
+
+    /// Adds all the rows from the matrix to the system and processes them in the next forward solving step.
+    ///
+    /// This version also performs back substitution on every new row during the forward solving.
+    ///
+    /// # Parameters
+    /// * `mat` - The matrix whose row are to be added to the system through forward solving.
+    pub fn add_matrix_with_back_subs(&mut self, mat: &SparseMatrix<F>) {
+        assert_eq!(mat.ncols(), self.u.ncols());
+
+        for row in mat.row_ptrs.windows(2) {
+            self.forward_solve_row_with_back_subs(&mat.values[row[0]..row[1]], &mat.col_idcs[row[0]..row[1]]);
         }
     }
 
@@ -1850,6 +1954,201 @@ impl<F: Field> SparseRowReducer<F> {
 
             //step
             pivot_col += 1;
+        }
+
+        if pivot_col < n {
+            self.pivots[pivot_col] = Some(self.u.nrows());
+
+            let leading_coeff = &self.scratch.dense_row[pivot_col];
+            match self.mode {
+                LuLMode::Full => {
+                    self.l.col_idcs.push(self.u.nrows);
+                    self.l.values.push(leading_coeff.clone());
+                    //finish the row
+                    self.l.row_ptrs.push(self.l.col_idcs.len());
+                    self.l.nrows += 1;
+                    self.l.ncols += 1;
+                }
+                LuLMode::Pattern => {
+                    self.l.col_idcs.push(self.u.nrows);
+                    //finish the row
+                    self.l.row_ptrs.push(self.l.col_idcs.len());
+                    self.l.nrows += 1;
+                    self.l.ncols += 1;
+                }
+                LuLMode::None => (), //notheng to be done
+            }
+
+            self.u.nrows += 1;
+            
+            //normalize and copy the dense row into U
+            let leading_coeff_inv = self.u.field.inv(&leading_coeff);
+            for i in pivot_col..n {
+                if self.scratch.touched[i] {
+                    //need to check for accidental zeroes
+                    let val = &mut self.scratch.dense_row[i];
+                    if !self.u.field.is_zero(val) {
+	                    self.u.col_idcs.push(i as u32);
+    	                if self.u.field.is_one(&leading_coeff_inv) {
+        	                self.u.values.push(val.clone());
+            	        } else {
+                	        self.u.values.push(self.u.field.mul(&leading_coeff_inv, val));
+                    	}
+                        //clean up scratch                      
+                    	*val = self.u.field.zero();
+                    }
+
+                    //clean up scratch
+                    self.scratch.touched[i] = false;
+                }
+            }
+
+            //finish the row
+            self.u.row_ptrs.push(self.u.col_idcs.len());
+
+            return Some(pivot_col as u32);
+        }
+
+        //else: need to finish L
+        match self.mode {
+            LuLMode::Full => {
+                //finish the row
+                self.l.row_ptrs.push(self.l.col_idcs.len());
+                self.l.nrows += 1;
+            }
+            LuLMode::Pattern => {
+                //finish the row
+                self.l.row_ptrs.push(self.l.col_idcs.len());
+                self.l.nrows += 1;
+            }
+            LuLMode::None => (), //nothing to be done
+        }
+
+        //row is linearly dependent
+        None
+    }
+    
+    /// Apply forward solving step to the given row.
+    ///
+    /// This version also performs as much back substitution as possible on the current row.
+    ///
+    /// # Return
+    /// The pivot column of the new row in U if it was a linearly independent row.
+    fn forward_solve_row_with_back_subs(&mut self, values: &[F::Element], col_idcs: &[u32]) -> Option<u32> {
+        if self.u.nrows == self.u.ncols || col_idcs.is_empty() {
+            //full rank reached or empty row
+            return None;
+        }
+
+        //check whether we can directly copy the row without doing anything
+        let mut pivot_col = col_idcs[0] as usize;
+        let mut direct = true;
+        //need to check whether the row contains ANY entry on a pivot column of previous rows
+        for col_idx in col_idcs {
+            if self.pivots[*col_idx as usize].is_some() {
+                direct = false;
+                break;
+            }
+        }
+        if direct {
+            //yes, we can directly copy it without doing anything
+            self.pivots[pivot_col] = Some(self.u.nrows());
+
+            //copy the whole row into u (and normalize)
+            let leading_coeff = &values[0];
+            let leading_coeff_inv = self.u.field.inv(&leading_coeff);
+            self.u.nrows += 1;
+            self.u.col_idcs.extend_from_slice(&col_idcs);
+            if self.u.field.is_one(&leading_coeff_inv) {
+                self.u.values.extend_from_slice(&values);
+            } else {
+                self.u.values.extend(
+                    values
+                        .iter()
+                        .map(|val| self.u.field.mul(val, &leading_coeff_inv)),
+                );
+            }
+            self.u.row_ptrs.push(self.u.values.len());
+
+            //also compute L if wanted
+            match self.mode {
+                LuLMode::Full => {
+                    //put a 1 on the diagonal
+                    self.l.col_idcs.push(self.u.nrows - 1);
+                    self.l.values.push(leading_coeff.clone());
+                    //finish the row
+                    self.l.row_ptrs.push(self.l.col_idcs.len());
+                    //update nrows/ncols
+                    self.l.nrows += 1;
+                    self.l.ncols += 1;
+                }
+                LuLMode::Pattern => {
+                    //put an entry on the diagonal
+                    self.l.col_idcs.push(self.u.nrows - 1);
+                    //finish the row
+                    self.l.row_ptrs.push(self.l.col_idcs.len());
+                    //update nrows/ncols
+                    self.l.nrows += 1;
+                    self.l.ncols += 1;
+                }
+                LuLMode::None => (), //nothing to be done
+            }
+
+            return Some(pivot_col as u32);
+        }
+
+        //prepare the scratch (copy sparse row into dense representation)
+        for (val, col_idx) in values.iter().zip(col_idcs.iter()) {
+            self.scratch.dense_row[*col_idx as usize] = val.clone();
+            self.scratch.touched[*col_idx as usize] = true;
+        }
+
+        let n = self.u.ncols as usize;
+        
+        //gaussian reduction until we find a pivot (or dense_row is zero)
+        pivot_col = n;
+        for col in col_idcs[0] as usize..n {
+            if self.scratch.touched[col] {
+                if self.u.field.is_zero(&self.scratch.dense_row[col]) {
+                    //accidental zero, remove from touched
+                    self.scratch.touched[col] = false;
+                    continue;
+                }
+
+                if let Some(pivot_row) = self.pivots[col] {
+                    //subtract the pivot row
+                    let start = self.u.row_ptrs[pivot_row as usize];
+                    let end = self.u.row_ptrs[pivot_row as usize + 1];
+                    let pivot_val = self.scratch.dense_row[col].clone();
+                    Self::scatter_with_touched(
+                        &mut self.scratch.dense_row,
+                        &self.u.field.neg(pivot_val.clone()),
+                        &self.u.values[start..end],
+                        &self.u.col_idcs[start..end],
+                        &self.u.field,
+                        &mut self.scratch.touched
+                    );
+
+                    debug_assert!(self.u.field.is_zero(&self.scratch.dense_row[col]));
+                    self.scratch.touched[col] = false;
+
+                    //also update L if wanted
+                    match self.mode {
+                        LuLMode::Full => {
+                            self.l.col_idcs.push(pivot_row);
+                            self.l.values.push(pivot_val);
+                        }
+                        LuLMode::Pattern => {
+                            self.l.col_idcs.push(pivot_row);
+                        }
+                        LuLMode::None => (), //nothing to be done
+                    }
+                } else {
+                    //found a pivot, we are done
+                    pivot_col = col;
+                    break;
+                }
+            }
         }
 
         if pivot_col < n {
