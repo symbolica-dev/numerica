@@ -560,7 +560,7 @@ impl<F: Ring> SparseMatrix<F> {
         self.values.len()
     }
 
-        /// Access the values vector.
+    /// Access the values vector.
     pub fn values(&self) -> &Vec<F::Element> {
         &self.values
     }
@@ -953,7 +953,7 @@ impl<F: Ring> SparseMatrix<F> {
         self.row_ptrs = new_row_ptrs;
     }
 
-     /// Get an iterator over the rows of the matrix.
+    /// Get an iterator over the rows of the matrix.
     ///
     /// It iterates over tuples of the form: (row_idx, col_idcs, values)
     pub fn row_iter(&self) -> SparseMatrixRowIterator<'_, F> {
@@ -2579,7 +2579,7 @@ mod tests {
             3,
             Q,
         )
-        .unwrap();
+            .unwrap();
 
         let b = a.to_sparse().to_dense();
         assert_eq!(a, b);
@@ -2587,29 +2587,29 @@ mod tests {
 
     /*#[test]
     fn random_gplu_backsubs() {
-        let mat = SparseMatrix::<Q>::random(80, 80, 100);
+    let mat = SparseMatrix::<Q>::random(80, 80, 100);
 
-        let mut gplu = Gplu::from_matrix(&mat, GpluLMode::Full);
+    let mut gplu = Gplu::from_matrix(&mat, GpluLMode::Full);
 
-        //check L.U == A (also checking multiplication and subtraction)
-        assert_eq!(&(gplu.l() * gplu.u()), &mat);
-        assert_eq!(
-            &(gplu.l() * gplu.u()) - &mat,
-            SparseMatrix::new(mat.nrows(), mat.ncols(), Q)
-        );
+    //check L.U == A (also checking multiplication and subtraction)
+    assert_eq!(&(gplu.l() * gplu.u()), &mat);
+    assert_eq!(
+    &(gplu.l() * gplu.u()) - &mat,
+    SparseMatrix::new(mat.nrows(), mat.ncols(), Q)
+);
 
-        let mut gplu2 = gplu.clone();
+    let mut gplu2 = gplu.clone();
 
-        //check the two versions of back_substitution against each other
-        gplu.back_substitution();
-        gplu2.back_substitution_parallel();
+    //check the two versions of back_substitution against each other
+    gplu.back_substitution();
+    gplu2.back_substitution_parallel();
 
-        //sort rows in order to compare
-        gplu.u.sort_rows_by_pivot(&gplu.pivots);
-        gplu2.u.sort_rows_by_pivot(&gplu2.pivots);
-        //TODO: check differently somehow, they are only equal if sorted, might differ by row permutation
-        assert_eq!(gplu.u(), gplu2.u());
-    }*/
+    //sort rows in order to compare
+    gplu.u.sort_rows_by_pivot(&gplu.pivots);
+    gplu2.u.sort_rows_by_pivot(&gplu2.pivots);
+    //TODO: check differently somehow, they are only equal if sorted, might differ by row permutation
+    assert_eq!(gplu.u(), gplu2.u());
+}*/
 
     #[test]
     fn row_by_row_rref() {
@@ -2860,6 +2860,6 @@ mod tests {
 
         assert_eq!(count_entries, 9);
         assert_eq!(count_rows, 5);
-                                                      
+        
     }
 }
