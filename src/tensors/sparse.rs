@@ -2143,7 +2143,7 @@ impl<F: Field> SparseRowReducer<F> {
                         }
                         LuLMode::None => (), //nothing to be done
                     }
-                } else {
+                } else if pivot_col == n{
                     //found a pivot, but we still continue
                     pivot_col = col;
                 }
@@ -2555,10 +2555,13 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::domains::rational::Q;
+    use crate::domains::{Set, rational::Q};
 
-    use crate::tensors::matrix::Matrix;
-    use crate::tensors::sparse::{SparseRowReducer, LuLMode, SparseMatrix, SparseVector};
+    use crate::tensors::{
+        matrix::Matrix,
+        sparse::{SparseRowReducer, LuLMode, SparseMatrix, SparseVector}
+    };
+
 
     #[test]
     fn dense_to_sparse() {
@@ -2613,120 +2616,102 @@ mod tests {
     #[test]
     fn row_by_row_rref() {
         let mut sparse_row_reducer = SparseRowReducer::new(6, Q, LuLMode::Full);
+        let mut sparse_row_reducer_with_back_subs = SparseRowReducer::new(6, Q, LuLMode::Full);
         let mut mat = SparseMatrix::new(0, 6, Q);
 
-        {
-            let mut values = Vec::new();
-            let mut col_idcs: Vec<u32> = Vec::new();
+        //mat=
+        //[
+        //  [0,3,7,0,0,13],
+        //  [1,0,0,3,-7,11],
+        //  [-2,0,0,14,-27,0],
+        //  [0,23,18,6,0,0]
+        //]
 
-            values.push(3.into());
-            col_idcs.push(1);
-            values.push(7.into());
-            col_idcs.push(2);
-            values.push(13.into());
-            col_idcs.push(5);
+        let values: Vec<<Q as Set>::Element> = vec![3.into(), 7.into(), 13.into()];
+        let col_idcs: Vec<u32> = vec![1,2,5];
+        sparse_row_reducer.add_row(&values, &col_idcs);
+        sparse_row_reducer_with_back_subs.add_row_with_back_subs(&values, &col_idcs);
+        mat.add_row(values, col_idcs);
 
-            sparse_row_reducer.add_row(&values, &col_idcs);
-            mat.add_row(values, col_idcs);
-        }
+        let values: Vec<<Q as Set>::Element> = vec![1.into(), 3.into(), (-7).into(), 11.into()];
+        let col_idcs: Vec<u32> = vec![0,3,4,5];
+        sparse_row_reducer.add_row(&values, &col_idcs);
+        sparse_row_reducer_with_back_subs.add_row_with_back_subs(&values, &col_idcs);
+        mat.add_row(values, col_idcs);
 
-        {
-            let mut values = Vec::new();
-            let mut col_idcs: Vec<u32> = Vec::new();
+        let values: Vec<<Q as Set>::Element> = vec![(-2).into(), 14.into(), (-27).into()];
+        let col_idcs: Vec<u32> = vec![0,3,4];
+        sparse_row_reducer.add_row(&values, &col_idcs);
+        sparse_row_reducer_with_back_subs.add_row_with_back_subs(&values, &col_idcs);
+        mat.add_row(values, col_idcs);
 
-            values.push((-2).into());
-            col_idcs.push(0);
-            values.push(14.into());
-            col_idcs.push(3);
-            values.push((-27).into());
-            col_idcs.push(4);
-
-            sparse_row_reducer.add_row(&values, &col_idcs);
-            mat.add_row(values, col_idcs);
-        }
-
-        {
-            let mut values = Vec::new();
-            let mut col_idcs: Vec<u32> = Vec::new();
-
-            values.push(23.into());
-            col_idcs.push(1);
-            values.push(18.into());
-            col_idcs.push(2);
-            values.push(6.into());
-            col_idcs.push(4);
-
-            sparse_row_reducer.add_row(&values, &col_idcs);
-            mat.add_row(values, col_idcs);
-        }
+        let values: Vec<<Q as Set>::Element> = vec![23.into(), 18.into(), 6.into()];
+        let col_idcs: Vec<u32> = vec![1,2,3];
+        sparse_row_reducer.add_row(&values, &col_idcs);
+        sparse_row_reducer_with_back_subs.add_row_with_back_subs(&values, &col_idcs);
+        mat.add_row(values, col_idcs);
 
         //check L.U == A (also checking multiplication and subtraction)
         assert_eq!(&(sparse_row_reducer.l() * sparse_row_reducer.u()), &mat);
+        assert_eq!(&(sparse_row_reducer_with_back_subs.l() * sparse_row_reducer_with_back_subs.u()), &mat);
         assert_eq!(
             &(sparse_row_reducer.l() * sparse_row_reducer.u()) - &mat,
             SparseMatrix::new(mat.nrows(), mat.ncols(), Q)
         );
-        //check U
+        
+        //check Us explicitly
         assert_eq!(
             sparse_row_reducer.u().fmt_mma(),
-            "{{{1,2}->1,{1,3}->7/3,{1,6}->13/3,{2,1}->1,{2,4}->-7,{2,5}->27/2,{3,3}->1,{3,5}->-18/107,{3,6}->299/107},{3,6}}"
+            "{{{1,2}->1,{1,3}->7/3,{1,6}->13/3,{2,1}->1,{2,4}->3,{2,5}->-7,{2,6}->11,{3,4}->1,{3,5}->-41/20,{3,6}->11/10,{4,3}->1,{4,4}->-18/107,{4,6}->299/107},{4,6}}"
         );
 
-        sparse_row_reducer.back_substitute();
+        assert_eq!(
+            sparse_row_reducer_with_back_subs.u().fmt_mma(),
+            "{{{1,2}->1,{1,3}->7/3,{1,6}->13/3,{2,1}->1,{2,4}->3,{2,5}->-7,{2,6}->11,{3,4}->1,{3,5}->-41/20,{3,6}->11/10,{4,3}->1,{4,5}->-369/1070,{4,6}->1594/535},{4,6}}"
+        );
+
         //check rref
+        sparse_row_reducer.back_substitute();
+        sparse_row_reducer_with_back_subs.back_substitute();
+        
+        assert_eq!(sparse_row_reducer.u(), sparse_row_reducer_with_back_subs.u());
         assert_eq!(
             sparse_row_reducer.u().fmt_mma(),
-            "{{{1,3}->1,{1,5}->-18/107,{1,6}->299/107,{2,2}->1,{2,5}->42/107,{2,6}->-234/107,{3,1}->1,{3,4}->-7,{3,5}->27/2},{3,6}}"
+            "{{{1,4}->1,{1,5}->-41/20,{1,6}->11/10,{2,3}->1,{2,5}->-369/1070,{2,6}->1594/535,{3,2}->1,{3,5}->861/1070,{3,6}->-1401/535,{4,1}->1,{4,5}->-17/20,{4,6}->77/10},{4,6}}"
         );
     }
 
     #[test]
     fn all_at_once_rref() {
+        
         let mut mat = SparseMatrix::new(0, 6, Q);
 
-        {
-            let mut values = Vec::new();
-            let mut col_idcs: Vec<u32> = Vec::new();
+        //mat=
+        //[
+        //  [0,3,7,0,0,13],
+        //  [1,0,0,3,-7,11],
+        //  [-2,0,0,14,-27,0],
+        //  [0,23,18,6,0,0]
+        //]
 
-            values.push(3.into());
-            col_idcs.push(1);
-            values.push(7.into());
-            col_idcs.push(2);
-            values.push(13.into());
-            col_idcs.push(5);
+        let values: Vec<<Q as Set>::Element> = vec![3.into(), 7.into(), 13.into()];
+        let col_idcs: Vec<u32> = vec![1,2,5];
+        mat.add_row(values, col_idcs);
 
-            mat.add_row(values, col_idcs);
-        }
+        let values: Vec<<Q as Set>::Element> = vec![1.into(), 3.into(), (-7).into(), 11.into()];
+        let col_idcs: Vec<u32> = vec![0,3,4,5];
+        mat.add_row(values, col_idcs);
 
-        {
-            let mut values = Vec::new();
-            let mut col_idcs: Vec<u32> = Vec::new();
+        let values: Vec<<Q as Set>::Element> = vec![(-2).into(), 14.into(), (-27).into()];
+        let col_idcs: Vec<u32> = vec![0,3,4];
+        mat.add_row(values, col_idcs);
 
-            values.push((-2).into());
-            col_idcs.push(0);
-            values.push(14.into());
-            col_idcs.push(3);
-            values.push((-27).into());
-            col_idcs.push(4);
-
-            mat.add_row(values, col_idcs);
-        }
-
-        {
-            let mut values = Vec::new();
-            let mut col_idcs: Vec<u32> = Vec::new();
-
-            values.push(23.into());
-            col_idcs.push(1);
-            values.push(18.into());
-            col_idcs.push(2);
-            values.push(6.into());
-            col_idcs.push(4);
-
-            mat.add_row(values, col_idcs);
-        }
+        let values: Vec<<Q as Set>::Element> = vec![23.into(), 18.into(), 6.into()];
+        let col_idcs: Vec<u32> = vec![1,2,3];
+        mat.add_row(values, col_idcs);
 
         let mut sparse_row_reducer = SparseRowReducer::from_matrix(&mat, LuLMode::Full);
+        let mut sparse_row_reducer_with_back_subs = SparseRowReducer::from_matrix_with_back_subs(&mat, LuLMode::Full);
 
         //check L.U == A (also checking multiplication and subtraction)
         assert_eq!(&(sparse_row_reducer.l() * sparse_row_reducer.u()), &mat);
@@ -2734,17 +2719,33 @@ mod tests {
             &(sparse_row_reducer.l() * sparse_row_reducer.u()) - &mat,
             SparseMatrix::new(mat.nrows(), mat.ncols(), Q)
         );
-        //check U
+
+        assert_eq!(&(sparse_row_reducer_with_back_subs.l() * sparse_row_reducer_with_back_subs.u()), &mat);
         assert_eq!(
-            sparse_row_reducer.u().fmt_mma(),
-            "{{{1,2}->1,{1,3}->7/3,{1,6}->13/3,{2,1}->1,{2,4}->-7,{2,5}->27/2,{3,3}->1,{3,5}->-18/107,{3,6}->299/107},{3,6}}"
+            &(sparse_row_reducer_with_back_subs.l() * sparse_row_reducer_with_back_subs.u()) - &mat,
+            SparseMatrix::new(mat.nrows(), mat.ncols(), Q)
         );
 
-        //check full rref
-        sparse_row_reducer.back_substitute();
+        //check Us explicitly
         assert_eq!(
             sparse_row_reducer.u().fmt_mma(),
-            "{{{1,3}->1,{1,5}->-18/107,{1,6}->299/107,{2,2}->1,{2,5}->42/107,{2,6}->-234/107,{3,1}->1,{3,4}->-7,{3,5}->27/2},{3,6}}"
+            "{{{1,2}->1,{1,3}->7/3,{1,6}->13/3,{2,1}->1,{2,4}->3,{2,5}->-7,{2,6}->11,{3,4}->1,{3,5}->-41/20,{3,6}->11/10,{4,3}->1,{4,4}->-18/107,{4,6}->299/107},{4,6}}"
+        );
+
+        assert_eq!(
+            sparse_row_reducer_with_back_subs.u().fmt_mma(),
+            "{{{1,2}->1,{1,3}->7/3,{1,6}->13/3,{2,1}->1,{2,4}->3,{2,5}->-7,{2,6}->11,{3,4}->1,{3,5}->-41/20,{3,6}->11/10,{4,3}->1,{4,5}->-369/1070,{4,6}->1594/535},{4,6}}"
+        );
+
+
+        //check rref
+        sparse_row_reducer.back_substitute();
+        sparse_row_reducer_with_back_subs.back_substitute();
+        
+        assert_eq!(sparse_row_reducer.u(), sparse_row_reducer_with_back_subs.u());
+        assert_eq!(
+            sparse_row_reducer.u().fmt_mma(),
+            "{{{1,4}->1,{1,5}->-41/20,{1,6}->11/10,{2,3}->1,{2,5}->-369/1070,{2,6}->1594/535,{3,2}->1,{3,5}->861/1070,{3,6}->-1401/535,{4,1}->1,{4,5}->-17/20,{4,6}->77/10},{4,6}}"
         );
     }
 
