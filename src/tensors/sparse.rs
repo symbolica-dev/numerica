@@ -1476,8 +1476,6 @@ impl<F: Field> Scratch<F> {
     }
 }
 
-unsafe impl<F: Field + Sync + Send> Sync for Scratch<F> where F::Element: Sync + Send {}
-
 /// Computes the RREF form of a sparse matrix.
 ///
 /// The struct implements two main algorithms:
