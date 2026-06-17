@@ -1173,7 +1173,7 @@ impl<F: Ring> Add<&SparseMatrix<F>> for &SparseMatrix<F> {
 
     /// Add two sparse matrices
     fn add(self, rhs: &SparseMatrix<F>) -> Self::Output {
-        if self.nrows != rhs.nrows || self.nrows != rhs.nrows {
+        if self.nrows != rhs.nrows || self.ncols != rhs.ncols {
             panic!(
                 "Cannot add sparse matrices of different dimensions: ({},{}) vs ({},{})",
                 self.nrows, self.ncols, rhs.nrows, rhs.ncols
@@ -1271,7 +1271,7 @@ impl<F: Ring> Sub<&SparseMatrix<F>> for &SparseMatrix<F> {
 
     /// Add two sparse matrices
     fn sub(self, rhs: &SparseMatrix<F>) -> Self::Output {
-        if self.nrows != rhs.nrows || self.nrows != rhs.nrows {
+        if self.nrows != rhs.nrows || self.ncols != rhs.ncols {
             panic!(
                 "Cannot subtract sparse matrices of different dimensions: ({},{}) vs ({},{})",
                 self.nrows, self.ncols, rhs.nrows, rhs.ncols
@@ -2585,31 +2585,23 @@ mod tests {
         assert_eq!(a, b);
     }
 
-    /*#[test]
-    fn random_gplu_backsubs() {
-    let mat = SparseMatrix::<Q>::random(80, 80, 100);
+    #[test]
+    #[should_panic(expected = "Cannot add sparse matrices of different dimensions")]
+    fn add_sparse_matrices_with_different_column_counts_panics() {
+        let lhs = SparseMatrix::from_triplets(2, 2, vec![(0, 0, 1.into())], Q);
+        let rhs = SparseMatrix::from_triplets(2, 3, vec![(0, 2, 1.into())], Q);
 
-    let mut gplu = Gplu::from_matrix(&mat, GpluLMode::Full);
+        let _ = &lhs + &rhs;
+    }
 
-    //check L.U == A (also checking multiplication and subtraction)
-    assert_eq!(&(gplu.l() * gplu.u()), &mat);
-    assert_eq!(
-    &(gplu.l() * gplu.u()) - &mat,
-    SparseMatrix::new(mat.nrows(), mat.ncols(), Q)
-);
+    #[test]
+    #[should_panic(expected = "Cannot subtract sparse matrices of different dimensions")]
+    fn subtract_sparse_matrices_with_different_column_counts_panics() {
+        let lhs = SparseMatrix::from_triplets(2, 2, vec![(0, 0, 1.into())], Q);
+        let rhs = SparseMatrix::from_triplets(2, 3, vec![(0, 2, 1.into())], Q);
 
-    let mut gplu2 = gplu.clone();
-
-    //check the two versions of back_substitution against each other
-    gplu.back_substitution();
-    gplu2.back_substitution_parallel();
-
-    //sort rows in order to compare
-    gplu.u.sort_rows_by_pivot(&gplu.pivots);
-    gplu2.u.sort_rows_by_pivot(&gplu2.pivots);
-    //TODO: check differently somehow, they are only equal if sorted, might differ by row permutation
-    assert_eq!(gplu.u(), gplu2.u());
-}*/
+        let _ = &lhs - &rhs;
+    }
 
     #[test]
     fn row_by_row_rref() {
