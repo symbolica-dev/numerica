@@ -1784,21 +1784,16 @@ impl<F: Field> SparseRowReducer<F> {
             let leading_coeff_inv = self.u.field.inv(&leading_coeff);
             for i in pivot_col..n {
                 if self.scratch.touched[i] {
-                    //need to check for accidental zeroes
-                    let val = &mut self.scratch.dense_row[i];
-                    if !self.u.field.is_zero(val) {
-	                    self.u.col_idcs.push(i as u32);
-    	                if self.u.field.is_one(&leading_coeff_inv) {
-        	                self.u.values.push(val.clone());
-            	        } else {
-                	        self.u.values.push(self.u.field.mul(&leading_coeff_inv, val));
-                    	}
-                        //clean up scratch                      
-                    	*val = self.u.field.zero();
+                    self.u.col_idcs.push(i as u32);
+                    if self.u.field.is_one(&leading_coeff_inv) {
+                        self.u.values.push(self.scratch.dense_row[i].clone());
+                    } else {
+                        self.u.values.push(self.u.field.mul(&leading_coeff_inv, &self.scratch.dense_row[i]));
                     }
 
                     //clean up scratch
                     self.scratch.touched[i] = false;
+                    self.scratch.dense_row[i] = self.u.field.zero();
                 }
             }
 
@@ -1888,17 +1883,10 @@ impl<F: Field> SparseRowReducer<F> {
         new_u.nrows += 1;
         for i in pivot_col..n {
             if self.scratch.touched[i] {
-                //need to check for accidental zeroes
-                let val = &mut self.scratch.dense_row[i];
-                if !self.u.field.is_zero(val) {
-	                new_u.col_idcs.push(i as u32);
-    	            new_u.values.push(val.clone());
-
-                    //clean up scratch
-            	    *val = self.u.field.zero();
-                }
-                //clean up scratch
+                new_u.col_idcs.push(i as u32);
+                new_u.values.push(self.scratch.dense_row[i].clone());
                 self.scratch.touched[i] = false;
+                self.scratch.dense_row[i] = self.u.field.zero();
             }
         }
         new_u.row_ptrs.push(new_u.col_idcs.len());
@@ -2140,16 +2128,10 @@ where
         out_mat.nrows += 1;
         for i in pivot_col..n {
             if scratch.touched[i] {
-                //need to check for accidental zeroes
-                let val = &mut scratch.dense_row[i];
-                if !self.u.field.is_zero(val) {
-	                out_mat.col_idcs.push(i as u32);
-    	            out_mat.values.push(val.clone());
-        	        //clean up scratch
-            	    *val = self.u.field.zero();
-                }
-                //clean up scratch
+                out_mat.col_idcs.push(i as u32);
+                out_mat.values.push(scratch.dense_row[i].clone());
                 scratch.touched[i] = false;
+                scratch.dense_row[i] = self.u.field.zero();
             }
         }
         out_mat.row_ptrs.push(out_mat.col_idcs.len());
