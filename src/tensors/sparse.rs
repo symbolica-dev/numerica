@@ -869,7 +869,7 @@ impl<F: Ring> SparseMatrix<F> {
 }
 
 impl<F: Field> SparseMatrix<F> {
-    /// Solve the linear system `A * x = b`, where `A` is `self` using a [`SparseRowReducer`]
+    /// Solve the linear system `A * x = b`, where `A` is `self` using the Gplu algorithm.
     pub fn solve(mut self, b: SparseVector<F>) -> Result<SparseVector<F>, SparseMatrixError<F>> {
         if self.nrows() != b.len() {
             return Err(SparseMatrixError::ShapeMismatch);
@@ -978,7 +978,7 @@ impl<F: Field + Sync + Send> SparseMatrix<F>
 where
     F::Element: Sync + Send,
 {
-    /// Solve the linear system `A * x = b`, where `A` is `self` using the a [`SparseRowReducer`]
+    /// Solve the linear system `A * x = b`, where `A` is `self` using the Gplu algorithm.
     /// The back substitution uses parallelized code.
     pub fn solve_parallel(
         mut self,
@@ -1433,7 +1433,7 @@ impl<F: Field> SparseRowReducer<F> {
         ret
     }
     
-    /// Construct a new row reducer that immediately forward solves the given matrix and checks for consistency at each step.
+    /// Construct a new Gplu decomposer that immediately decomposes the given matrix and checks for consistency at each step.
     ///
     /// Checking for consistency means that we return None whenever a new row in `U` is all zero except the last entry.
     /// The idea is that we decompose the matrix `(A|b)` for solving the system `A * x = b`, which becomes unsolvable in this case.
@@ -1464,7 +1464,7 @@ impl<F: Field> SparseRowReducer<F> {
         Some(ret)
     }
 
-    /// Construct a new row reducer that immediately forward solves the given matrix and stops when a linearly dependent row is found.
+    /// Construct a new Gplu decomposer that immediately decomposes the given matrix and stops when a linearly dependent row is found.
     ///
     /// Checking for consistency means that we return None whenever a new row in `U` is all zero except the last entry.
     /// The idea is that we decompose the matrix `(A|b)` for solving the system `A * x = b`, which becomes unsolvable in this case.
@@ -1971,7 +1971,7 @@ where
 {
     /// Applies backsubstitution to the U matrix to bring it into RREF form (up to row permutation).
     ///
-    /// We do not keep track of the L matrix, so LuLMode will be set to `None` and the L matrix will be emptied.
+    /// We do not keep track of the L matrix, so GpluLMode will be set to `None` and the L matrix will be emptied.
     /// This version employs a parallel algorithm, which though in total does more work than the serial version.
     /// Note that the output of this version might not be the same as of back_substitution() as rows might be permuted.
     pub fn back_substitute_parallel(&mut self) {
