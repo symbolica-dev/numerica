@@ -38,7 +38,7 @@ use crate::{
 
 /// A sparse vector in a compressed format (compressed sparse row style).
 ///
-/// We keep the column indices sorted at all times.
+/// We keep the entries sorted by their index at all times.
 #[derive(Clone, Hash, PartialEq, Eq, Debug)]
 pub struct SparseVector<F: Ring> {
     /// The non-zero entries of the vector sorted by index.
@@ -229,7 +229,7 @@ impl<F: Ring> std::fmt::Display for SparseMatrixError<F> {
 
 /// A sparse matrix in compressed sparse row (CSR) format.
 ///
-/// We keep the column indices (of each row) sorted at all times.
+/// We keep each row sorted at all times.
 #[derive(Clone, Hash, PartialEq, Eq, Debug)]
 pub struct SparseMatrix<F: Ring> {
     /// The non-zero entries of the matrix sorted by row and column
@@ -289,62 +289,6 @@ impl<'a, F: Ring> IntoIterator for &'a SparseMatrix<F> {
             matrix: self,
             row: 0,
             pos: 0,
-        }
-    }
-}
-
-pub struct SparseMatrixRowIterator<'a, F: Ring> {
-    /// The matrix we are iterating over.
-    matrix: &'a SparseMatrix<F>,
-    /// The next row
-    row: u32,
-    /// After the end row (needed for DoubleEndedIterator)
-    end_row: u32,
-}
-
-impl<'a, F: Ring> Iterator for SparseMatrixRowIterator<'a, F> {
-    /// (row_idx, col_idcs, values)
-    type Item = (u32, &'a [u32], &'a [F::Element]);
-
-    /// Iterate over the rows of the matrix.
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.row < self.end_row {
-            let row = self.row;
-            
-            let row_start = self.matrix.row_ptrs[row as usize];
-            let row_end = self.matrix.row_ptrs[(row + 1) as usize];
-            
-            //move to next row
-            self.row += 1;
-
-            Some((
-                row,
-                &self.matrix.col_idcs[row_start..row_end],
-                &self.matrix.values[row_start..row_end]
-            ))
-        } else {
-            None
-        }
-    }
-}
-
-impl<'a, F: Ring> DoubleEndedIterator for SparseMatrixRowIterator<'a, F> {
-    fn next_back(&mut self) -> Option<Self::Item> {
-        if self.row < self.end_row {
-            self.end_row -= 1;
-
-            let row = self.end_row;
-
-            let row_start = self.matrix.row_ptrs[row as usize];
-            let row_end = self.matrix.row_ptrs[(row + 1) as usize];
-
-            Some((
-                row,
-                &self.matrix.col_idcs[row_start..row_end],
-                &self.matrix.values[row_start..row_end],
-            ))
-        } else {
-            None
         }
     }
 }
@@ -558,21 +502,6 @@ impl<F: Ring> SparseMatrix<F> {
     /// Return the number of non-zero entries.
     pub fn nvalues(&self) -> usize {
         self.values.len()
-    }
-
-        /// Access the values vector.
-    pub fn values(&self) -> &Vec<F::Element> {
-        &self.values
-    }
-
-    /// Access the column indices vector.
-    pub fn col_idcs(&self) -> &Vec<u32> {
-        &self.col_idcs
-    }
-
-    /// Access the row pointer vector.
-    pub fn row_ptrs(&self) -> &Vec<usize> {
-        &self.row_ptrs
     }
 
     /// Multiply the scalar `e` to each entry of the matrix
@@ -815,20 +744,6 @@ impl<F: Ring> SparseMatrix<F> {
         ret
     }
 
-    /// Get the last row of the matrix
-    ///
-    /// Returns (row_idx, col_idcs, values)
-    pub fn last_row(&self) -> Option<(u32, &[u32], &[F::Element])> {
-        if self.nrows == 0 {
-            None
-        } else {
-            let row_start = self.row_ptrs[self.row_ptrs.len() - 2] as usize;
-            let row_end = self.row_ptrs[self.row_ptrs.len() - 1] as usize;
-
-            Some((self.nrows - 1, &self.col_idcs[row_start..row_end], &self.values[row_start..row_end]))
-        }
-    }
-
     /// Format in Mathematica form
     ///
     /// Simply apply `SparseArray@@` to the output in MMA.
@@ -928,7 +843,6 @@ impl<F: Ring> SparseMatrix<F> {
 
     /// Sorts the rows of the matrix by their pivot column.
     ///
-    /// The matrix must be forward solved, e.g. with a [`SparseRowReducer`], which also provides the `pivots` object.
     /// # Arguments
     /// * `pivots` - The pivot positions for each column, i.e. there is a pivot on column `j` and row `pivots[j]`.
     pub fn sort_rows_by_pivot(&mut self, pivots: &Vec<Option<u32>>) {
@@ -951,17 +865,6 @@ impl<F: Ring> SparseMatrix<F> {
         self.values = new_values;
         self.col_idcs = new_col_idcs;
         self.row_ptrs = new_row_ptrs;
-    }
-
-     /// Get an iterator over the rows of the matrix.
-    ///
-    /// It iterates over tuples of the form: (row_idx, col_idcs, values)
-    pub fn row_iter(&self) -> SparseMatrixRowIterator<'_, F> {
-        SparseMatrixRowIterator {
-            matrix: self,
-            row: 0,
-            end_row: self.nrows(),
-        }
     }
 }
 
@@ -2530,37 +2433,5 @@ mod tests {
         let inv = mat.inv().unwrap();
 
         assert_eq!(&mat * &inv, SparseMatrix::identity(5, Q));
-    }
-
-    #[test]
-    fn row_iter() {
-        // sparse 5x5 matrix triplets
-        let triplets = vec![
-            // row, col, entry
-            (0, 0, 1.into()),
-            (0, 2, 2.into()),
-            (1, 1, 1.into()),
-            (1, 3, 3.into()),
-            (2, 2, 1.into()),
-            (2, 4, 4.into()),
-            (3, 3, 1.into()),
-            (4, 0, 2.into()),
-            (4, 4, 1.into()),
-        ];
-
-        let mat = SparseMatrix::from_triplets(5, 5, triplets, Q);
-
-        let mut count_entries = 0;
-        let mut count_rows = 0;
-        for (idx, row) in mat.row_iter().enumerate() {
-            count_rows += 1;
-            assert_eq!(idx, row.0 as usize);
-            assert_eq!(row.1.len(), row.2.len());
-            count_entries += row.1.len();
-        }
-
-        assert_eq!(count_entries, 9);
-        assert_eq!(count_rows, 5);
-                                                      
     }
 }
