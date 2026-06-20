@@ -2144,8 +2144,9 @@ impl<F: Field> SparseRowReducer<F> {
                         LuLMode::None => (), //nothing to be done
                     }
                 } else {
-                    //found a pivot, but we still continue
+                    //found a pivot, we are done
                     pivot_col = col;
+                    break;
                 }
             }
         }
