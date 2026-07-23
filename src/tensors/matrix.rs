@@ -936,6 +936,12 @@ impl<F: Ring> Matrix<F> {
         self.data.iter()
     }
 
+    /// Return a row-first iterator over the mutable entries of the matrix.
+    pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, F::Element> {
+        self.data.iter_mut()
+    }
+    
+
     /// Apply a function `f` to each entry of the matrix.
     pub fn map<G: Ring>(&self, f: impl Fn(&F::Element) -> G::Element, field: G) -> Matrix<G> {
         Matrix {
@@ -1035,6 +1041,24 @@ impl<F: Ring> Matrix<F> {
         }
 
         Ok((m1, m2))
+    }
+
+    /// Appends a row to the matrix.
+    ///
+    /// The number of columns of the matrix and the length of the vector need to agree.
+    pub fn append_row(&mut self, row: Vector<F>) {
+        assert_eq!(self.ncols as usize, row.len());
+        self.nrows += 1;
+        self.data.extend(row.data);
+    }
+
+    /// Concatenates two matrices, i.e. appends the rows of the `other` matrix to `self`.
+    ///
+    /// The number of columns of the two matrices need to agree.
+    pub fn concatenate(&mut self, other: Matrix<F>) {
+        assert_eq!(self.ncols, other.ncols);
+        self.nrows += other.nrows;
+        self.data.extend(other.data);
     }
 
     /// Compute the determinant of the matrix.
