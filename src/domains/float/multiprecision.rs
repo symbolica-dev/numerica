@@ -800,6 +800,16 @@ impl From<MultiPrecisionFloat> for Float {
 
 impl FloatLike for Float {
     #[inline(always)]
+    fn real_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.partial_cmp(other)
+    }
+
+    #[inline(always)]
+    fn needs_rescaling(&self) -> bool {
+        !self.is_finite() || self.is_zero()
+    }
+
+    #[inline(always)]
     fn set_from(&mut self, other: &Self) {
         self.0.clone_from(&other.0);
     }
@@ -917,6 +927,21 @@ impl RealLike for Float {
 }
 
 impl Real for Float {
+    #[cfg(feature = "float-mpfr")]
+    #[inline(always)]
+    fn log1p(&self) -> Self {
+        self.0.clone().ln_1p().into()
+    }
+
+    #[inline(always)]
+    fn copy_sign(&self, sign: &Self) -> Self {
+        if sign.is_negative() {
+            -self.norm()
+        } else {
+            self.norm()
+        }
+    }
+
     #[inline(always)]
     fn pi(&self) -> Self {
         MultiPrecisionFloat::with_val(self.prec(), Constant::Pi).into()

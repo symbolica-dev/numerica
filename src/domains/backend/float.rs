@@ -610,8 +610,21 @@ mod astro {
             } else if value == f64::NEG_INFINITY {
                 INF_NEG
             } else {
-                let mut value =
-                    BigFloat::from_f64(value, precision(prec).max(f64::MANTISSA_DIGITS as usize));
+                // Astro 0.9 misinterprets the exponent of subnormal f64s.
+                // Normalize exactly before conversion, then restore the exponent.
+                let subnormal = value.is_subnormal();
+                let normalized = if subnormal {
+                    value * 4503599627370496.0
+                } else {
+                    value
+                };
+                let mut value = BigFloat::from_f64(
+                    normalized,
+                    precision(prec).max(f64::MANTISSA_DIGITS as usize),
+                );
+                if subnormal {
+                    value.set_exponent(value.exponent().unwrap() - 52);
+                }
                 let _ = value.set_precision(precision(prec), ROUNDING_MODE);
                 value
             };
@@ -759,7 +772,13 @@ mod astro {
         }
 
         pub fn get_exp(&self) -> Option<i32> {
-            self.value.exponent()
+            // Match MPFR: zero has no exponent. Treating its placeholder
+            // exponent as significant destroys precision after cancellation.
+            if self.value.is_zero() {
+                None
+            } else {
+                self.value.exponent()
+            }
         }
 
         pub fn get_significand(&self) -> Option<String> {
