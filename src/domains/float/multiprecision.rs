@@ -799,6 +799,10 @@ impl From<MultiPrecisionFloat> for Float {
 }
 
 impl FloatLike for Float {
+    fn nan(&self) -> Option<Self> {
+        Some(Float::with_val(self.prec(), f64::NAN))
+    }
+
     #[inline(always)]
     fn real_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         self.partial_cmp(other)

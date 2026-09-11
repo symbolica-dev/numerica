@@ -824,6 +824,14 @@ macro_rules! create_hyperdual_from_components {
         }
 
         impl<T: $crate::domains::float::FloatLike> $crate::domains::float::FloatLike for $t<T> {
+            fn nan(&self) -> Option<Self> {
+                let mut result = self.clone();
+                for value in &mut result.values {
+                    *value = value.nan()?;
+                }
+                Some(result)
+            }
+
             #[inline]
             fn set_from(&mut self, other: &Self) {
                 for (a, b) in self.values.iter_mut().zip(&other.values) {
@@ -1891,6 +1899,17 @@ impl<T: FloatLike> std::ops::DivAssign<HyperDual<T>> for HyperDual<T> {
 }
 
 impl<T: FloatLike> FloatLike for HyperDual<T> {
+    fn nan(&self) -> Option<Self> {
+        Some(Self {
+            values: self
+                .values
+                .iter()
+                .map(FloatLike::nan)
+                .collect::<Option<_>>()?,
+            shape: self.shape.clone(),
+        })
+    }
+
     #[inline]
     fn set_from(&mut self, other: &Self) {
         for (a, b) in self.values.iter_mut().zip(&other.values) {

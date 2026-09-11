@@ -461,6 +461,13 @@ impl LowerExp for RealBall {
 }
 
 impl FloatLike for RealBall {
+    fn nan(&self) -> Option<Self> {
+        Some(Self {
+            center: self.center.nan()?,
+            radius: self.radius.nan()?,
+        })
+    }
+
     fn set_from(&mut self, other: &Self) {
         self.center.set_from(&other.center);
         self.radius.set_from(&other.radius);

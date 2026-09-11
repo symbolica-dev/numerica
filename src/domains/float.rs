@@ -82,6 +82,11 @@ pub trait FloatLike:
     fn mul_add(&self, a: &Self, b: &Self) -> Self;
     fn neg(&self) -> Self;
     fn zero(&self) -> Self;
+    /// Construct a NaN, preserving this value's precision and component shape.
+    /// Returns `None` for exact types, such as rationals, that cannot represent NaN.
+    fn nan(&self) -> Option<Self> {
+        None
+    }
     /// Create a zero that should only be used as a temporary value,
     /// as for some types it may have wrong precision information.
     fn new_zero() -> Self;

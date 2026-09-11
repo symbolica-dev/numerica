@@ -143,6 +143,10 @@ impl DoubleFloat {
 }
 
 impl FloatLike for DoubleFloat {
+    fn nan(&self) -> Option<Self> {
+        Some(f64::NAN.into())
+    }
+
     #[inline(always)]
     fn real_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         self.partial_cmp(other)

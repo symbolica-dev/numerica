@@ -7,6 +7,10 @@ use crate::domains::rational::Rational;
 macro_rules! simd_impl {
     ($t:ty) => {
         impl FloatLike for $t {
+            fn nan(&self) -> Option<Self> {
+                Some(Self::splat(f64::NAN))
+            }
+
             #[inline(always)]
             fn set_from(&mut self, other: &Self) {
                 *self = *other;

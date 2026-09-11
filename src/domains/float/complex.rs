@@ -790,6 +790,13 @@ impl<T: SingleFloat> SingleFloat for Complex<T> {
 }
 
 impl<T: FloatLike> FloatLike for Complex<T> {
+    fn nan(&self) -> Option<Self> {
+        Some(Self {
+            re: self.re.nan()?,
+            im: self.im.nan()?,
+        })
+    }
+
     #[inline]
     fn set_from(&mut self, other: &Self) {
         self.re.set_from(&other.re);

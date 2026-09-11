@@ -10,6 +10,10 @@ use super::{Constructible, FixedPrecision, FloatLike, Real, RealLike, SingleFloa
 use crate::domains::{InternalOrdering, integer::Integer, rational::Rational};
 
 impl FloatLike for f64 {
+    fn nan(&self) -> Option<Self> {
+        Some(f64::NAN)
+    }
+
     #[inline(always)]
     fn real_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         self.partial_cmp(other)
@@ -328,6 +332,10 @@ impl F64 {
 }
 
 impl FloatLike for F64 {
+    fn nan(&self) -> Option<Self> {
+        Some(F64(f64::NAN))
+    }
+
     #[inline(always)]
     fn real_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         self.partial_cmp(other)
