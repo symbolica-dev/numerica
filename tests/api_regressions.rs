@@ -260,3 +260,38 @@ fn csr_validation_rejects_invalid_structure() {
     assert!(catch_unwind(|| SparseMatrix::from_triplets(1, 1, vec![(1, 0, 1.into())], Z)).is_err());
 }
 
+#[test]
+fn empty_grids_and_invalid_bin_evolution_return_errors() {
+    assert!(DiscreteGrid::<f64>::new(vec![], 100.0, false).is_err());
+    for (dims, bins) in [(0, 10), (1, 0), (0, 0)] {
+        assert!(ContinuousGrid::<f64>::new(dims, bins, 100, None, false).is_err());
+        assert!(
+            ContinuousGrid::<f64>::new_with_min_probability_density(
+                dims, bins, 100, None, false, 0.1
+            )
+            .is_err()
+        );
+    }
+    for evolution in [vec![], vec![0], vec![10, 0]] {
+        assert!(ContinuousGrid::<f64>::new(1, 10, 100, Some(evolution), false).is_err());
+    }
+    assert!(ContinuousGrid::<f64>::new(1, 1, 100, Some(vec![1, 2]), false).is_ok());
+}
+
+#[test]
+fn sample_buffers_can_be_reused_across_grid_variants() {
+    let mut rng = MonteCarloRng::new(0, 0);
+    let mut sample = Sample::new();
+    let mut discrete = DiscreteGrid::new(vec![None], 100.0, false).unwrap();
+    let mut continuous = ContinuousGrid::new(1, 1, 1, None, false).unwrap();
+    let mut uniform = Grid::Uniform(vec![2], continuous.clone());
+    for _ in 0..3 {
+        discrete.sample(&mut rng, &mut sample);
+        continuous.sample(&mut rng, &mut sample);
+        assert!(matches!(&sample, Sample::Continuous(w, xs) if *w == 1.0 && xs.len() == 1));
+        uniform.sample(&mut rng, &mut sample);
+        assert!(
+            matches!(&sample, Sample::Uniform(w, ds, xs) if *w == 2.0 && ds.len() == 1 && xs.len() == 1)
+        );
+    }
+}
