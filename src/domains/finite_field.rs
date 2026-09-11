@@ -495,6 +495,11 @@ impl Ring for Zp {
     /// Compute b^e % n.
     #[inline]
     fn pow(&self, b: &Self::Element, mut e: u64) -> Self::Element {
+        // Fermat reduction only applies to nonzero bases. Keep 0^0 = 1.
+        if self.is_zero(b) {
+            return if e == 0 { self.one() } else { self.zero() };
+        }
+
         if self.is_prime && e >= self.get_prime() as u64 - 1 {
             e %= self.get_prime() as u64 - 1;
         }
@@ -1187,6 +1192,11 @@ impl Ring for Zp64 {
     /// Compute b^e % n.
     #[inline]
     fn pow(&self, b: &Self::Element, mut e: u64) -> Self::Element {
+        // Fermat reduction only applies to nonzero bases. Keep 0^0 = 1.
+        if self.is_zero(b) {
+            return if e == 0 { self.one() } else { self.zero() };
+        }
+
         if self.is_prime && e >= self.get_prime() - 1 {
             e %= self.get_prime() - 1;
         }
@@ -1899,6 +1909,11 @@ impl Ring for FiniteField<Mersenne32> {
     /// Compute b^e % n.
     #[inline]
     fn pow(&self, b: &Self::Element, mut e: u64) -> Self::Element {
+        // Fermat reduction only applies to nonzero bases. Keep 0^0 = 1.
+        if self.is_zero(b) {
+            return if e == 0 { self.one() } else { self.zero() };
+        }
+
         let p_minus_1 = self.get_prime().0 as u64 - 1;
         if e >= p_minus_1 {
             e %= p_minus_1;
@@ -2275,6 +2290,11 @@ impl Ring for FiniteField<Mersenne64> {
     /// Compute b^e % n.
     #[inline]
     fn pow(&self, b: &Self::Element, mut e: u64) -> Self::Element {
+        // Fermat reduction only applies to nonzero bases. Keep 0^0 = 1.
+        if self.is_zero(b) {
+            return if e == 0 { self.one() } else { self.zero() };
+        }
+
         if e >= self.get_prime().0 - 1 {
             e %= self.get_prime().0 - 1;
         }
@@ -2609,6 +2629,11 @@ impl Ring for FiniteField<Integer> {
     }
 
     fn pow(&self, b: &Self::Element, mut e: u64) -> Self::Element {
+        // Fermat reduction only applies to nonzero bases. Keep 0^0 = 1.
+        if self.is_zero(b) {
+            return if e == 0 { self.one() } else { self.zero() };
+        }
+
         if e == 0 {
             return self.one();
         }
@@ -2955,6 +2980,11 @@ impl Ring for FiniteField<MultiPrecisionInteger> {
     }
 
     fn pow(&self, b: &Self::Element, mut e: u64) -> Self::Element {
+        // Fermat reduction only applies to nonzero bases. Keep 0^0 = 1.
+        if self.is_zero(b) {
+            return if e == 0 { self.one() } else { self.zero() };
+        }
+
         if e == 0 {
             return self.one();
         }

@@ -120,3 +120,32 @@ fn parse_counts_significant_digits_independently_of_notation() {
     assert!(Float::parse("1", Some(0)).is_err());
 }
 
+fn check_zero_powers<F: Ring>(field: F, period: u64) {
+    assert_eq!(field.pow(&field.zero(), 0), field.one());
+    for exponent in [1, 2, period, period.saturating_mul(2), u64::MAX] {
+        assert_eq!(field.pow(&field.zero(), exponent), field.zero());
+        assert_eq!(field.pow(&field.one(), exponent), field.one());
+    }
+}
+
+#[test]
+fn zero_powers_are_correct_in_all_finite_field_representations() {
+    check_zero_powers(Zp::new(7), 6);
+    check_zero_powers(Zp64::new(7), 6);
+    check_zero_powers(Zp::new_non_prime(9), 8);
+    check_zero_powers(
+        FiniteField::<Mersenne32>::new(Mersenne32::new()),
+        (1 << 31) - 2,
+    );
+    check_zero_powers(
+        FiniteField::<Mersenne64>::new(Mersenne64::new()),
+        (1 << 61) - 2,
+    );
+    check_zero_powers(Z2, 1);
+    check_zero_powers(FiniteField::<Integer>::new_non_prime(7.into()), 6);
+    check_zero_powers(
+        FiniteField::<MultiPrecisionInteger>::new_non_prime(7.into()),
+        6,
+    );
+}
+
