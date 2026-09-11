@@ -183,7 +183,8 @@ impl InternalOrdering for Integer {
 
 #[cfg(feature = "python")]
 use pyo3::{
-    Borrowed, Bound, FromPyObject, IntoPyObject, PyErr, PyResult, Python, exceptions, types::PyInt,
+    Borrowed, Bound, FromPyObject, IntoPyObject, PyErr, PyResult, Python, exceptions,
+    types::{PyAnyMethods, PyInt},
 };
 
 #[cfg(feature = "python_stubgen")]
@@ -197,8 +198,12 @@ impl<'py> FromPyObject<'_, 'py> for Integer {
         if let Ok(num) = ob.extract::<i64>() {
             Ok(num.into())
         } else if let Ok(num) = ob.cast::<PyInt>() {
-            let a = num.to_string();
-            Ok(Integer::from(a.parse::<MultiPrecisionInteger>().unwrap()))
+            let text = num.str()?;
+            let value = text
+                .extract::<String>()?
+                .parse::<MultiPrecisionInteger>()
+                .map_err(|error| exceptions::PyValueError::new_err(error.to_string()))?;
+            Ok(Integer::from(value))
         } else {
             Err(exceptions::PyValueError::new_err("Not a valid integer"))
         }
@@ -209,24 +214,16 @@ impl<'py> FromPyObject<'_, 'py> for Integer {
 impl<'py> IntoPyObject<'py> for Integer {
     type Target = PyInt;
     type Output = Bound<'py, Self::Target>;
-    type Error = std::convert::Infallible;
+    type Error = PyErr;
 
     fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
         match self {
-            Integer::Single(n) => n.into_pyobject(py),
-            Integer::Double(d) => d.get().into_pyobject(py),
-            Integer::Large(l) => unsafe {
-                Ok(Bound::from_owned_ptr(
-                    py,
-                    pyo3::ffi::PyLong_FromString(
-                        l.to_string().as_str().as_ptr() as *const i8,
-                        std::ptr::null_mut(),
-                        10,
-                    ),
-                )
-                .cast_into::<PyInt>()
-                .unwrap())
-            },
+            Integer::Single(n) => Ok(n.into_pyobject(py)?),
+            Integer::Double(d) => Ok(d.get().into_pyobject(py)?),
+            Integer::Large(l) => Ok(py
+                .get_type::<PyInt>()
+                .call1((format!("{:x}", l.as_raw()), 16))?
+                .cast_into::<PyInt>()?),
         }
     }
 }
