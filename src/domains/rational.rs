@@ -18,6 +18,7 @@ use super::{
         FiniteField, FiniteFieldCore, FiniteFieldWorkspace, PrimeIteratorU64, ToFiniteField, Two,
         Z2, Zp,
     },
+    float::RealLike,
     integer::{Integer, IntegerRing, Z},
 };
 
@@ -215,6 +216,10 @@ impl<R: EuclideanDomain + FractionNormalization> RingOps<<FractionField<R> as Se
     fn add(&self, a: Self::Element, b: Self::Element) -> Self::Element {
         let r = &self.ring;
 
+        if r.is_one(&a.denominator) && r.is_one(&b.denominator) {
+            return self.to_element_numerator(r.add(a.numerator, b.numerator));
+        }
+
         if a.denominator == b.denominator {
             let num = r.add(&a.numerator, &b.numerator);
             let g = r.gcd(&num, &a.denominator);
@@ -269,6 +274,9 @@ impl<R: EuclideanDomain + FractionNormalization> RingOps<<FractionField<R> as Se
 
     fn mul(&self, a: Self::Element, b: Self::Element) -> Self::Element {
         let r = &self.ring;
+        if r.is_one(&a.denominator) && r.is_one(&b.denominator) {
+            return self.to_element_numerator(r.mul(a.numerator, b.numerator));
+        }
         let gcd1 = r.gcd(&a.numerator, &b.denominator);
         let gcd2 = r.gcd(&a.denominator, &b.numerator);
 
@@ -317,11 +325,11 @@ impl<R: EuclideanDomain + FractionNormalization> RingOps<<FractionField<R> as Se
     }
 
     fn add_mul_assign(&self, a: &mut Self::Element, b: Self::Element, c: Self::Element) {
-        self.add_assign(a, &self.mul(b, c));
+        self.add_mul_assign(a, &b, &c);
     }
 
     fn sub_mul_assign(&self, a: &mut Self::Element, b: Self::Element, c: Self::Element) {
-        self.sub_assign(a, &self.mul(b, c));
+        self.sub_mul_assign(a, &b, &c);
     }
 
     fn neg(&self, a: Self::Element) -> Self::Element {
@@ -337,6 +345,10 @@ impl<R: EuclideanDomain + FractionNormalization> RingOps<&<FractionField<R> as S
 {
     fn add(&self, a: &Self::Element, b: &Self::Element) -> Self::Element {
         let r = &self.ring;
+
+        if r.is_one(&a.denominator) && r.is_one(&b.denominator) {
+            return self.to_element_numerator(r.add(&a.numerator, &b.numerator));
+        }
 
         if a.denominator == b.denominator {
             let num = r.add(&a.numerator, &b.numerator);
@@ -393,6 +405,9 @@ impl<R: EuclideanDomain + FractionNormalization> RingOps<&<FractionField<R> as S
 
     fn mul(&self, a: &Self::Element, b: &Self::Element) -> Self::Element {
         let r = &self.ring;
+        if r.is_one(&a.denominator) && r.is_one(&b.denominator) {
+            return self.to_element_numerator(r.mul(&a.numerator, &b.numerator));
+        }
         let gcd1 = r.gcd(&a.numerator, &b.denominator);
         let gcd2 = r.gcd(&a.denominator, &b.numerator);
 
@@ -428,11 +443,19 @@ impl<R: EuclideanDomain + FractionNormalization> RingOps<&<FractionField<R> as S
     }
 
     fn add_assign(&self, a: &mut Self::Element, b: &Self::Element) {
+        if self.ring.is_one(&a.denominator) && self.ring.is_one(&b.denominator) {
+            self.ring.add_assign(&mut a.numerator, &b.numerator);
+            return;
+        }
         // TODO: optimize
         *a = self.add(&*a, b);
     }
 
     fn sub_assign(&self, a: &mut Self::Element, b: &Self::Element) {
+        if self.ring.is_one(&a.denominator) && self.ring.is_one(&b.denominator) {
+            self.ring.sub_assign(&mut a.numerator, &b.numerator);
+            return;
+        }
         *a = self.sub(&*a, b);
     }
 
@@ -441,10 +464,26 @@ impl<R: EuclideanDomain + FractionNormalization> RingOps<&<FractionField<R> as S
     }
 
     fn add_mul_assign(&self, a: &mut Self::Element, b: &Self::Element, c: &Self::Element) {
+        if self.ring.is_one(&a.denominator)
+            && self.ring.is_one(&b.denominator)
+            && self.ring.is_one(&c.denominator)
+        {
+            self.ring
+                .add_mul_assign(&mut a.numerator, &b.numerator, &c.numerator);
+            return;
+        }
         self.add_assign(a, &self.mul(b, c));
     }
 
     fn sub_mul_assign(&self, a: &mut Self::Element, b: &Self::Element, c: &Self::Element) {
+        if self.ring.is_one(&a.denominator)
+            && self.ring.is_one(&b.denominator)
+            && self.ring.is_one(&c.denominator)
+        {
+            self.ring
+                .sub_mul_assign(&mut a.numerator, &b.numerator, &c.numerator);
+            return;
+        }
         self.sub_assign(a, &self.mul(b, c));
     }
 
@@ -980,9 +1019,21 @@ impl Rational {
     }
 
     pub fn to_f64(&self) -> f64 {
-        let numerator = self.numerator.to_string().parse::<f64>().unwrap();
-        let denominator = self.denominator.to_string().parse::<f64>().unwrap();
-        numerator / denominator
+        fn fixed_to_f64(value: &Integer) -> Option<f64> {
+            match value {
+                Integer::Single(value) => Some(*value as f64),
+                Integer::Double(value) => Some(value.get() as f64),
+                Integer::Large(_) => None,
+            }
+        }
+
+        match (
+            fixed_to_f64(&self.numerator),
+            fixed_to_f64(&self.denominator),
+        ) {
+            (Some(numerator), Some(denominator)) => numerator / denominator,
+            _ => self.to_multi_prec_float(f64::MANTISSA_DIGITS).to_f64(),
+        }
     }
 
     /// Return a best approximation of the rational number where the denominator
@@ -1430,7 +1481,7 @@ mod test {
     use crate::domains::{
         Field, OrderedRing, RealEmbedding, Ring, RingOps,
         float::{Float, Real},
-        integer::Z,
+        integer::{Integer, Z},
         rational::{FractionField, Rational},
     };
 
@@ -1476,5 +1527,13 @@ mod test {
         assert_eq!(f.sign(&Rational::zero()), std::cmp::Ordering::Equal);
         assert_eq!(f.cmp(&half, &two_thirds), std::cmp::Ordering::Less);
         assert_eq!(f.try_cmp(&half, &two_thirds), Ok(std::cmp::Ordering::Less));
+    }
+
+    #[test]
+    fn rational_to_f64_with_large_components() {
+        let scale = Integer::one() << 4096u32;
+        let rational = Rational::from_int_unchecked(&scale * 3, scale * 2);
+
+        assert_eq!(rational.to_f64(), 1.5);
     }
 }
