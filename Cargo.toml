@@ -30,6 +30,7 @@ serde = [
 # allow importing/exporting of atoms with a state map using bincode
 bincode = ["dep:bincode", "dep:bincode-trait-derive"]
 python = ["pyo3", "numpy"]
+python-module = ["python", "pyo3/extension-module"]
 python_stubgen = ["python", "pyo3-stub-gen"]
 
 [dependencies]

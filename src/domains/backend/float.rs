@@ -592,9 +592,13 @@ mod astro {
         pub(crate) fn parse_at_prec_radix(s: &[u8], radix: u8, prec: u32) -> Result<Self, String> {
             let s = std::str::from_utf8(s).map_err(|e| e.to_string())?;
             let radix = self::radix(radix)?;
-            let value = with_constants(|constants| {
+            let mut value = with_constants(|constants| {
                 BigFloat::parse(s, radix, precision(prec), ROUNDING_MODE, constants)
             });
+            // Astro normalizes parsed zeroes; retain the literal sign.
+            if value.is_zero() && s.starts_with('-') {
+                value.set_sign(Sign::Neg);
+            }
             if value.is_nan() {
                 Err(format!("failed to parse float `{s}`"))
             } else {
@@ -610,6 +614,7 @@ mod astro {
             } else if value == f64::NEG_INFINITY {
                 INF_NEG
             } else {
+                let negative = value.is_sign_negative();
                 // Astro 0.9 misinterprets the exponent of subnormal f64s.
                 // Normalize exactly before conversion, then restore the exponent.
                 let subnormal = value.is_subnormal();
@@ -626,6 +631,9 @@ mod astro {
                     value.set_exponent(value.exponent().unwrap() - 52);
                 }
                 let _ = value.set_precision(precision(prec), ROUNDING_MODE);
+                if value.is_zero() && negative {
+                    value.set_sign(Sign::Neg);
+                }
                 value
             };
             Self { value, prec }
@@ -669,6 +677,8 @@ mod astro {
                 f64::INFINITY
             } else if self.value.is_inf_neg() {
                 f64::NEG_INFINITY
+            } else if self.value.is_zero() {
+                if self.is_sign_negative() { -0.0 } else { 0.0 }
             } else {
                 format_value(&self.value, Radix::Dec)
                     .parse::<f64>()
@@ -726,6 +736,43 @@ mod astro {
 
         pub fn pow(&self, rhs: &Self) -> Self {
             let prec = self.prec;
+            // Astro's general power can loop while trying to prove rounding of
+            // exact roots (for example 4**0.5). Small dyadic exponents can be
+            // evaluated directly by square roots and integer exponentiation.
+            if !self.is_sign_negative()
+                && self.is_finite()
+                && rhs.get_exp().is_some_and(|e| (-32..=64).contains(&e))
+                && let Some(ratio) = finite_to_rational(&rhs.value)
+            {
+                let (num, den) = rational_into_integer_ratio(ratio);
+                let num = if rhs.is_sign_negative() { -num } else { num };
+                if let (Some(mut power), Some(den)) = (num.to_u64(), den.to_u64())
+                    && den.is_power_of_two()
+                    && den.trailing_zeros() <= 32
+                {
+                    let work = guard_precision(prec).saturating_add(64);
+                    let mut base = self.value.clone();
+                    let _ = base.set_precision(work, ROUNDING_MODE);
+                    for _ in 0..den.trailing_zeros() {
+                        base = base.sqrt(work, ROUNDING_MODE);
+                    }
+                    let mut value = BigFloat::from_u8(1, work);
+                    while power != 0 {
+                        if power & 1 != 0 {
+                            value = value.mul(&base, work, ROUNDING_MODE);
+                        }
+                        power >>= 1;
+                        if power != 0 {
+                            base = base.mul(&base, work, ROUNDING_MODE);
+                        }
+                    }
+                    if rhs.is_sign_negative() {
+                        value = value.reciprocal(work, ROUNDING_MODE);
+                    }
+                    let _ = value.set_precision(precision(prec), ROUNDING_MODE);
+                    return Self { value, prec };
+                }
+            }
             let value = with_constants(|constants| {
                 self.value
                     .pow(&rhs.value, precision(prec), ROUNDING_MODE, constants)
@@ -772,9 +819,9 @@ mod astro {
         }
 
         pub fn get_exp(&self) -> Option<i32> {
-            // Match MPFR: zero has no exponent. Treating its placeholder
-            // exponent as significant destroys precision after cancellation.
-            if self.value.is_zero() {
+            // Match MPFR: zero has no significant-bit exponent. Treating it as
+            // an ordinary exponent discards precision when adding an exact zero.
+            if self.is_zero() || !self.is_finite() {
                 None
             } else {
                 self.value.exponent()
@@ -845,26 +892,66 @@ mod astro {
 
         pub fn atan2(self, rhs: &Self) -> Self {
             let prec = self.prec.min(rhs.prec);
+            if self.is_nan() || rhs.is_nan() {
+                return Self::from_f64(prec, f64::NAN);
+            }
+            if !self.is_finite() || !rhs.is_finite() {
+                let quarters = if !self.is_finite() {
+                    if !rhs.is_finite() {
+                        if rhs.is_sign_negative() { 3 } else { 1 }
+                    } else {
+                        2
+                    }
+                } else if rhs.is_sign_negative() {
+                    4
+                } else {
+                    0
+                };
+                let angle = if quarters == 0 {
+                    Self::new(prec)
+                } else {
+                    Self::with_val(prec, Constant::Pi) * quarters as i64 / 4i64
+                };
+                return if self.is_sign_negative() {
+                    -angle
+                } else {
+                    angle
+                };
+            }
             let x_cmp = rhs.cmp_zero();
             let y_cmp = self.cmp_zero();
 
             if x_cmp == Some(Ordering::Equal) {
                 let pi = Self::with_val(prec, Constant::Pi);
-                let half_pi = pi / 2i64;
+                let half_pi = pi.clone() / 2i64;
                 return if y_cmp == Some(Ordering::Less) {
                     -half_pi
                 } else if y_cmp == Some(Ordering::Greater) {
                     half_pi
                 } else {
-                    Self::new(prec)
+                    let angle = if rhs.is_sign_negative() {
+                        pi
+                    } else {
+                        Self::new(prec)
+                    };
+                    if self.is_sign_negative() {
+                        -angle
+                    } else {
+                        angle
+                    }
                 };
             }
 
             if y_cmp == Some(Ordering::Equal) {
-                return if x_cmp == Some(Ordering::Less) {
+                let angle = if x_cmp == Some(Ordering::Less) {
                     Self::with_val(prec, Constant::Pi)
                 } else {
                     Self::new(prec)
+                };
+                return if self.is_sign_negative() {
+                    -angle
+                } else {
+                    angle
                 };
             }
 

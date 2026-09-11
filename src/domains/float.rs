@@ -35,7 +35,10 @@ pub use interval::{ComplexBall, RealBall};
 pub use multiprecision::Float;
 pub use native::F64;
 #[cfg(feature = "python")]
-pub use python::PythonMultiPrecisionFloat;
+pub use python::{
+    PythonComplexFloat, PythonFloat, PythonMultiPrecisionComplex, PythonMultiPrecisionFloat,
+    register_python_floats,
+};
 
 pub trait FloatLike:
     PartialEq

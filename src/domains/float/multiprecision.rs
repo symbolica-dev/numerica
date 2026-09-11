@@ -780,7 +780,7 @@ impl Float {
         Ok(bits)
     }
 
-    fn check_precision(prec: u32) -> Result<(), String> {
+    pub(crate) fn check_precision(prec: u32) -> Result<(), String> {
         #[cfg(feature = "float-mpfr")]
         let valid = (rug::float::prec_min()..=rug::float::prec_max()).contains(&prec);
         #[cfg(not(feature = "float-mpfr"))]

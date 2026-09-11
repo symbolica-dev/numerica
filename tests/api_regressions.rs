@@ -7,8 +7,8 @@ use numerica::{
         dual::{DualNumberStructure, HyperDual},
         finite_field::{FiniteField, FiniteFieldCore, Mersenne32, Mersenne64, Z2, Zp, Zp64},
         float::{
-            Complex, DoubleFloat, ErrorPropagatingFloat, F64, Float, FloatLike, RealBall, RealLike,
-            SingleFloat,
+            Complex, DoubleFloat, ErrorPropagatingFloat, F64, Float, FloatLike, Real, RealBall,
+            RealLike, SingleFloat,
         },
         integer::{Integer, MultiPrecisionInteger, Z},
         rational::{Q, Rational},
@@ -294,4 +294,50 @@ fn sample_buffers_can_be_reused_across_grid_variants() {
             matches!(&sample, Sample::Uniform(w, ds, xs) if *w == 2.0 && ds.len() == 1 && xs.len() == 1)
         );
     }
+}
+
+#[test]
+fn exact_zero_does_not_destroy_significant_digits() {
+    let tiny = Float::parse("1e-60", Some(200)).unwrap();
+    let result = tiny.clone() + Float::new(200);
+    assert_eq!(result.prec(), tiny.prec());
+    assert_eq!(result.to_rational(), tiny.to_rational());
+}
+
+#[test]
+fn real_powers_handle_exact_dyadic_roots() {
+    for (base, exponent, expected) in [
+        (4, "0.5", "2"),
+        (16, "0.25", "2"),
+        (16, "-0.25", "0.5"),
+        (4, "1.5", "8"),
+    ] {
+        let result = Float::with_val(200, base).powf(&Float::parse(exponent, Some(200)).unwrap());
+        assert_eq!(
+            result.to_rational(),
+            Float::parse(expected, Some(200)).unwrap().to_rational()
+        );
+    }
+}
+
+#[test]
+fn atan2_preserves_signed_zero_quadrants_and_infinities() {
+    for y in [0.0_f64, -0.0, 1.0, -1.0, f64::INFINITY, f64::NEG_INFINITY] {
+        for x in [0.0_f64, -0.0, 1.0, -1.0, f64::INFINITY, f64::NEG_INFINITY] {
+            let angle = Float::with_val(160, y)
+                .atan2(&Float::with_val(160, x))
+                .to_f64();
+            assert!(
+                (angle - y.atan2(x)).abs() < 1e-15,
+                "atan2({y}, {x}) = {angle}"
+            );
+            assert_eq!(angle.is_sign_negative(), y.is_sign_negative());
+        }
+    }
+    assert!(
+        Float::with_val(160, 1)
+            .atan2(&Float::with_val(160, f64::NAN))
+            .to_f64()
+            .is_nan()
+    );
 }
