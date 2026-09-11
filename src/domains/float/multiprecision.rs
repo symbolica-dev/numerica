@@ -686,7 +686,8 @@ impl Float {
         DoubleFloat(Df64::compensated_sum(hi, residual.to_f64()))
     }
 
-    /// Parse a float from a string.
+    /// Parse decimal notation, optionally with an `e`/`E` exponent, or NaN/infinity.
+    /// An explicit `prec` is in bits and overrides a backtick suffix.
     /// Precision can be specified by a trailing backtick followed by the precision.
     /// For example: ```1.234`20``` for a precision of 20 decimal digits.
     /// The precision is allowed to be a floating point number.
@@ -694,43 +695,76 @@ impl Float {
     /// or a backtick without a number following), the precision is derived from the string, with
     /// a minimum of 53 bits (`f64` precision).
     pub fn parse(s: &str, prec: Option<u32>) -> Result<Self, String> {
-        if let Some(prec) = prec {
-            Self::check_precision(prec)?;
-            Ok(Float(
-                MultiPrecisionFloat::parse(s)
-                    .map_err(|e| e.to_string())?
-                    .complete(prec),
-            ))
-        } else if let Some((f, p)) = s.split_once('`') {
-            let prec = if p.is_empty() {
-                53
-            } else {
+        let (value, suffix) = s
+            .trim()
+            .split_once('`')
+            .map_or((s.trim(), None), |(v, p)| (v, Some(p)));
+        let suffix_precision = suffix
+            .filter(|p| !p.is_empty())
+            .map(|p| {
                 Self::decimal_digits_to_bits(
                     p.parse::<f64>()
                         .map_err(|e| format!("Invalid precision: {e}"))?,
-                )?
-            };
-
-            Ok(Float(
-                MultiPrecisionFloat::parse(f)
-                    .map_err(|e| e.to_string())?
-                    .complete(prec),
-            ))
+                )
+            })
+            .transpose()?;
+        let precision = if let Some(prec) = prec {
+            Self::check_precision(prec)?;
+            prec
+        } else if let Some(prec) = suffix_precision {
+            prec
         } else {
-            // get the number of accurate digits
-            let digits = s
+            // Count significant decimal digits in the significand, excluding the
+            // sign, decimal point, leading zeroes, and scientific exponent.
+            let digits = value
+                .split(['e', 'E'])
+                .next()
+                .unwrap_or(value)
                 .chars()
-                .skip_while(|x| *x == '.' || *x == '0')
-                .take_while(|x| x.is_ascii_digit())
+                .filter(char::is_ascii_digit)
+                .skip_while(|c| *c == '0')
                 .count();
-
-            let prec = ((digits as f64 * LOG2_10).ceil() as u32).max(53);
-            Ok(Float(
-                MultiPrecisionFloat::parse(s)
-                    .map_err(|e| e.to_string())?
-                    .complete(prec),
-            ))
+            Self::decimal_digits_to_bits(digits.max(1) as f64)?.max(53)
+        };
+        // Handle special values consistently across backends. Astro's parser
+        // uses NaN to report invalid input, so it cannot distinguish a NaN literal.
+        let special = match value.to_ascii_lowercase().as_str() {
+            "nan" | "+nan" | "-nan" => Some(f64::NAN),
+            "inf" | "+inf" | "infinity" | "+infinity" => Some(f64::INFINITY),
+            "-inf" | "-infinity" => Some(f64::NEG_INFINITY),
+            _ => None,
+        };
+        if let Some(value) = special {
+            return Ok(Float::with_val(precision, value));
         }
+
+        // Validate the whole decimal literal: some backends accept a valid
+        // prefix (for example, `1e`) instead of reporting malformed input.
+        let unsigned = value.strip_prefix(['+', '-']).unwrap_or(value);
+        let (mantissa, exponent) = unsigned
+            .split_once(['e', 'E'])
+            .map_or((unsigned, None), |(m, e)| (m, Some(e)));
+        let valid_exponent = exponent.is_none_or(|e| {
+            let e = e.strip_prefix(['+', '-']).unwrap_or(e);
+            !e.is_empty() && e.bytes().all(|c| c.is_ascii_digit())
+        });
+        if !valid_exponent
+            || !mantissa.bytes().any(|c| c.is_ascii_digit())
+            || mantissa.bytes().any(|c| !c.is_ascii_digit() && c != b'.')
+            || mantissa.bytes().filter(|&c| c == b'.').count() > 1
+        {
+            return Err(format!("Invalid decimal float: {value}"));
+        }
+
+        #[cfg(feature = "float-astro")]
+        return MultiPrecisionFloat::parse_at_prec(value, precision).map(Float);
+
+        #[cfg(feature = "float-mpfr")]
+        Ok(Float(
+            MultiPrecisionFloat::parse(value)
+                .map_err(|e| e.to_string())?
+                .complete(precision),
+        ))
     }
 
     /// Convert a positive, finite decimal precision to a supported binary precision.

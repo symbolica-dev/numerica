@@ -77,3 +77,46 @@ fn dual_nan_preserves_shape() {
     );
 }
 
+#[test]
+fn parse_counts_significant_digits_independently_of_notation() {
+    for s in [
+        "123456789012345678901234567890",
+        "-123456789012345678901234567890",
+        "+123456789012345678901234567890",
+        "1.23456789012345678901234567890e29",
+        "-0.000123456789012345678901234567890E33",
+        "  123456789012345678901234567890  ",
+        "123456789012345678901234567890`",
+    ] {
+        let value = Float::parse(s, None).unwrap();
+        assert_eq!(value.prec(), 100, "{s}");
+        let expected: Rational = "123456789012345678901234567890"
+            .parse::<Integer>()
+            .unwrap()
+            .into();
+        let expected = if s.trim_start().starts_with('-') {
+            -expected
+        } else {
+            expected
+        };
+        assert_eq!(value.try_to_rational(), Some(expected), "{s}");
+    }
+    for s in ["0", "-0.0000", "1e100", "1.25E-100", "NaN"] {
+        assert_eq!(Float::parse(s, None).unwrap().prec(), 53, "{s}");
+    }
+    assert!(Float::parse("NaN", Some(80)).unwrap().to_f64().is_nan());
+    assert_eq!(
+        Float::parse("-Infinity", None).unwrap().to_f64(),
+        f64::NEG_INFINITY
+    );
+    assert_eq!(Float::parse("1.25`40", None).unwrap().prec(), 133);
+    assert_eq!(Float::parse("1.25`40", Some(80)).unwrap().prec(), 80);
+    for s in [
+        "", "-", "1e", "1.2.3", "1`0", "1`-1", "1`NaN", "1`inf", "1`1`2",
+    ] {
+        assert!(Float::parse(s, None).is_err(), "{s}");
+        assert!(Float::parse(s, Some(80)).is_err(), "{s}");
+    }
+    assert!(Float::parse("1", Some(0)).is_err());
+}
+
