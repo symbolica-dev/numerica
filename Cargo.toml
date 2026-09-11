@@ -8,7 +8,7 @@ license = "MIT"
 description = "Open-source math library for exact and floating point computations"
 readme = "Readme.md"
 repository = "https://github.com/symbolica-dev/numerica"
-rust-version = "1.88"
+rust-version = "1.89"
 
 [features]
 default = ["integer-gmp", "float-mpfr"]

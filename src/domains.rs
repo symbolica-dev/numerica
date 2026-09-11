@@ -307,10 +307,6 @@ pub trait Ring:
 }
 
 /// A ring whose elements can be sampled according to a ring-specific policy.
-///
-/// Sampling is kept separate from [`Ring`] because not every ring has a useful
-/// default distribution. In particular, polynomial distributions need extra
-/// choices such as degree bounds and a coefficient distribution.
 pub trait SampleableRing: Ring {
     /// Configuration that defines the distribution over ring elements.
     type SamplingPolicy;
