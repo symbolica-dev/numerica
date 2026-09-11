@@ -1,5 +1,17 @@
 //! Optional coefficient-domain kernels for bulk polynomial and interpolation operations.
 
+use crate::domains::rational::Rational;
+
+/// Lossless conversion between a coefficient representation and rational numbers.
+///
+/// Both functions must preserve arithmetic and be inverses of one another. This
+/// lets polynomial algorithms clear denominators while retaining their own
+/// exponent representation and variable context.
+pub struct RationalCoefficientConversion<E> {
+    pub to_rational: fn(&E) -> Rational,
+    pub from_rational: fn(Rational) -> E,
+}
+
 /// A dense-indexed polynomial multiplication request.
 ///
 /// `left_indices[i]` and `right_indices[i]` are the additive dense indices of the corresponding
@@ -47,12 +59,50 @@ pub struct TotalDegreePolynomialMulRequest<'a, E> {
 ///
 /// Divisibility is guaranteed by the caller. A kernel may consume dividend coefficients after it
 /// decides to handle the request, but must leave them unchanged when returning `None`.
+/// Coefficient and index slices have equal lengths, indices are strictly increasing
+/// and smaller than `total`, and the divisor has a nonzero leading coefficient.
+/// Invalid indices must be rejected before consuming coefficients. Violating exact
+/// divisibility may panic or produce an incorrect quotient, but must remain memory-safe.
 pub struct DensePolynomialExactDivisionRequest<'a, E> {
     pub total: usize,
     pub dividend_coefficients: &'a mut [E],
     pub dividend_indices: &'a [u32],
     pub divisor_coefficients: &'a [E],
     pub divisor_indices: &'a [u32],
+}
+
+/// The outcome of a checked division kernel.
+#[derive(Debug, PartialEq, Eq)]
+pub enum DivisionAttempt<Q> {
+    /// The kernel cannot handle this request. Use the generic algorithm.
+    Unsupported,
+    /// The divisor is zero or the division has a nonzero remainder.
+    NotDivisible,
+    /// The verified quotient.
+    Quotient(Q),
+}
+
+/// Checked division of two sparse univariate polynomials.
+///
+/// Each coefficient slice has the same length as its exponent slice. Coefficients
+/// are nonzero and exponents are strictly increasing. An empty slice represents
+/// zero. Exponents are nonnegative and at most `i32::MAX`.
+pub struct UnivariatePolynomialDivisionRequest<'a, E> {
+    pub dividend_coefficients: &'a [E],
+    pub dividend_exponents: &'a [u32],
+    pub divisor_coefficients: &'a [E],
+    pub divisor_exponents: &'a [u32],
+}
+
+/// Coefficient-domain algorithms that verify polynomial divisibility.
+pub trait CheckedPolynomialDivisionKernels<E> {
+    /// Return a verified quotient, a proven rejection, or `Unsupported` to request
+    /// generic division. Quotient terms have nonzero coefficients and strictly
+    /// increasing exponents, in the same variable as the input.
+    fn try_univariate_division(
+        &self,
+        request: UnivariatePolynomialDivisionRequest<'_, E>,
+    ) -> DivisionAttempt<Vec<(u32, E)>>;
 }
 
 /// One step over a collection of coefficient-weighted geometric sequences.
@@ -152,8 +202,10 @@ pub trait PolynomialKernels<E> {
 /// Coefficient-domain kernels returned by [`crate::domains::Ring::kernels`].
 pub struct RingKernels<'a, E> {
     polynomial: Option<&'a dyn PolynomialKernels<E>>,
+    checked_polynomial_division: Option<&'a dyn CheckedPolynomialDivisionKernels<E>>,
     geometric_sequences: Option<&'a dyn GeometricSequenceKernels<E>>,
     preferred_total_degree_mul_density: Option<usize>,
+    rational_conversion: Option<RationalCoefficientConversion<E>>,
 }
 
 impl<'a, E> RingKernels<'a, E> {
@@ -162,9 +214,28 @@ impl<'a, E> RingKernels<'a, E> {
     pub const fn empty() -> Self {
         Self {
             polynomial: None,
+            checked_polynomial_division: None,
             geometric_sequences: None,
             preferred_total_degree_mul_density: None,
+            rational_conversion: None,
         }
+    }
+
+    /// Enable polynomial algorithms that reduce rational coefficients to integers.
+    #[inline]
+    #[must_use]
+    pub fn with_rational_conversion(
+        mut self,
+        conversion: RationalCoefficientConversion<E>,
+    ) -> Self {
+        self.rational_conversion = Some(conversion);
+        self
+    }
+
+    /// Return the lossless rational coefficient conversion, if available.
+    #[inline]
+    pub fn rational_conversion(&self) -> Option<&RationalCoefficientConversion<E>> {
+        self.rational_conversion.as_ref()
     }
 
     /// Add polynomial multiplication and division kernels.
@@ -172,6 +243,17 @@ impl<'a, E> RingKernels<'a, E> {
     #[must_use]
     pub fn with_polynomial(mut self, kernels: &'a dyn PolynomialKernels<E>) -> Self {
         self.polynomial = Some(kernels);
+        self
+    }
+
+    /// Add kernels that verify polynomial divisibility.
+    #[inline]
+    #[must_use]
+    pub fn with_checked_polynomial_division(
+        mut self,
+        kernels: &'a dyn CheckedPolynomialDivisionKernels<E>,
+    ) -> Self {
+        self.checked_polynomial_division = Some(kernels);
         self
     }
 
@@ -199,6 +281,14 @@ impl<'a, E> RingKernels<'a, E> {
     #[inline]
     pub fn polynomial(&self) -> Option<&'a dyn PolynomialKernels<E>> {
         self.polynomial
+    }
+
+    /// Return kernels that verify polynomial divisibility, when available.
+    #[inline]
+    pub fn checked_polynomial_division(
+        &self,
+    ) -> Option<&'a dyn CheckedPolynomialDivisionKernels<E>> {
+        self.checked_polynomial_division
     }
 
     /// Return geometric-sequence evaluation kernels, when available.

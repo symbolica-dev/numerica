@@ -98,6 +98,11 @@ impl<R: Ring> Display for FractionField<R> {
 }
 
 pub trait FractionNormalization: Ring {
+    /// Return optional algorithms and coefficient conversions for fractions over this ring.
+    fn fraction_kernels(&self) -> crate::kernels::RingKernels<'_, Fraction<Self>> {
+        crate::kernels::RingKernels::empty()
+    }
+
     /// Get the factor that normalizes the element `a`.
     /// - For a field, this is the inverse of `a`.
     /// - For the integers, this is the sign of `a`.
@@ -106,6 +111,15 @@ pub trait FractionNormalization: Ring {
 }
 
 impl FractionNormalization for Z {
+    fn fraction_kernels(&self) -> crate::kernels::RingKernels<'_, Fraction<Self>> {
+        crate::kernels::RingKernels::empty().with_rational_conversion(
+            crate::kernels::RationalCoefficientConversion {
+                to_rational: Clone::clone,
+                from_rational: |coefficient| coefficient,
+            },
+        )
+    }
+
     fn get_normalization_factor(&self, a: &Integer) -> Integer {
         if *a < 0 { (-1).into() } else { 1.into() }
     }
@@ -496,6 +510,11 @@ impl<R: EuclideanDomain + FractionNormalization> RingOps<&<FractionField<R> as S
 }
 
 impl<R: EuclideanDomain + FractionNormalization> Ring for FractionField<R> {
+    #[inline]
+    fn kernels(&self) -> crate::kernels::RingKernels<'_, Self::Element> {
+        self.ring.fraction_kernels()
+    }
+
     fn zero(&self) -> Self::Element {
         Fraction {
             numerator: self.ring.zero(),

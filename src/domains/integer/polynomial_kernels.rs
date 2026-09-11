@@ -2679,6 +2679,9 @@ impl<'a> DenseIntegerExactDivision<'a> {
 
         let divisor_leading_index = *divisor_indices.last()? as usize;
         if divisor_leading_index >= total
+            || dividend_indices.windows(2).any(|pair| pair[0] >= pair[1])
+            || divisor_indices.windows(2).any(|pair| pair[0] >= pair[1])
+            || divisor_coefficients.last()?.is_zero()
             || dividend_indices
                 .last()
                 .is_some_and(|&index| index as usize >= total)
@@ -2724,8 +2727,9 @@ impl<'a> DenseIntegerExactDivision<'a> {
                 continue;
             }
 
-            debug_assert!(position >= divisor_leading_index);
-            let quotient_position = position - divisor_leading_index;
+            let quotient_position = position
+                .checked_sub(divisor_leading_index)
+                .expect("exact polynomial division produced a remainder");
             let quotient_coefficient = match &divisors {
                 Divisors::Borrowed(divisors) => {
                     coefficient.div_exact_owned(divisors.last().unwrap())
@@ -2740,6 +2744,8 @@ impl<'a> DenseIntegerExactDivision<'a> {
                         .zip(&divisors[..divisors.len() - 1])
                     {
                         let target = quotient_position + divisor_position as usize;
+                        // Sorted divisor indices and checked subtraction imply
+                        // target < position < workspace.len().
                         debug_assert!(target < position);
                         unsafe {
                             workspace
@@ -2755,6 +2761,8 @@ impl<'a> DenseIntegerExactDivision<'a> {
                         .zip(&divisors[..divisors.len() - 1])
                     {
                         let target = quotient_position + divisor_position as usize;
+                        // Sorted divisor indices and checked subtraction imply
+                        // target < position < workspace.len().
                         debug_assert!(target < position);
                         unsafe {
                             workspace
@@ -2913,6 +2921,71 @@ fn total_degree_limb_workspace_is_bounded(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "integer-gmp")]
+    #[test]
+    fn exact_division_rejects_invalid_indices_before_consuming_coefficients() {
+        let large = Integer::from(MultiPrecisionInteger::from(1u32) << 200u32);
+        let sorted: Vec<u32> = (0..8).collect();
+        for invalid in [
+            vec![8, 1, 2, 3, 4, 5, 6, 7],
+            vec![0, 1, 2, 3, 4, 5, 7, 6],
+            vec![0, 1, 2, 3, 4, 5, 6, 6],
+            vec![0, 1, 2, 3, 4, 5, 6, 8],
+        ] {
+            for (dividend_indices, divisor_indices) in [(&invalid, &sorted), (&sorted, &invalid)] {
+                let original = vec![large.clone(); 8];
+                let mut dividend = original.clone();
+                assert!(
+                    IntegerRing
+                        .try_dense_exact_division(DensePolynomialExactDivisionRequest {
+                            total: 8,
+                            dividend_coefficients: &mut dividend,
+                            dividend_indices,
+                            divisor_coefficients: &original,
+                            divisor_indices,
+                        })
+                        .is_none()
+                );
+                assert_eq!(dividend, original);
+            }
+        }
+        let mut dividend = vec![large.clone(); 8];
+        let original = dividend.clone();
+        let mut divisor = original.clone();
+        divisor[7] = Integer::zero();
+        assert!(
+            IntegerRing
+                .try_dense_exact_division(DensePolynomialExactDivisionRequest {
+                    total: 8,
+                    dividend_coefficients: &mut dividend,
+                    dividend_indices: &sorted,
+                    divisor_coefficients: &divisor,
+                    divisor_indices: &sorted,
+                })
+                .is_none()
+        );
+        assert_eq!(dividend, original);
+    }
+
+    #[cfg(feature = "integer-gmp")]
+    #[test]
+    #[should_panic(expected = "exact polynomial division produced a remainder")]
+    fn exact_division_guards_low_remainders_in_release_too() {
+        let large = Integer::from(MultiPrecisionInteger::from(1u32) << 200u32);
+        let indices: Vec<u32> = (0..8).collect();
+        let mut divisor = vec![large; 8];
+        divisor[7] = Integer::one();
+        let mut dividend = divisor.clone();
+        dividend[0] += Integer::one();
+        IntegerRing.try_dense_exact_division(DensePolynomialExactDivisionRequest {
+            total: 8,
+            dividend_coefficients: &mut dividend,
+            dividend_indices: &indices,
+            divisor_coefficients: &divisor,
+            divisor_indices: &indices,
+        });
+    }
 
     #[cfg(feature = "integer-gmp")]
     #[test]
