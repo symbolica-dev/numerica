@@ -4044,27 +4044,19 @@ pub fn extended_gcd_i128(mut a: i128, mut b: i128) -> (u128, i128, i128) {
 }
 
 /// Compute the signed GCD of two `i64` numbers.
-pub fn gcd_signed(mut a: i64, mut b: i64) -> u64 {
-    let mut c;
-    while a != 0 {
-        c = a;
-        // only wraps when i64::MIN % -1 and that still yields 0
-        a = b.wrapping_rem(a);
-        b = c;
-    }
-    b.unsigned_abs()
+pub fn gcd_signed(a: i64, b: i64) -> u64 {
+    gcd_unsigned(a.unsigned_abs(), b.unsigned_abs())
 }
 
 /// Compute the signed GCD of two `i128` numbers.
-pub fn gcd_signed_i128(mut a: i128, mut b: i128) -> u128 {
-    let mut c;
+pub fn gcd_signed_i128(a: i128, b: i128) -> u128 {
+    // Computing on magnitudes also handles MIN without a signed overflow case.
+    // In particular, no iteration needs signed remainder or its overflow check.
+    let (mut a, mut b) = (a.unsigned_abs(), b.unsigned_abs());
     while a != 0 {
-        c = a;
-        // only wraps when i128::MIN % -1 and that still yields 0
-        a = b.wrapping_rem(a);
-        b = c;
+        (a, b) = (b % a, a);
     }
-    b.unsigned_abs()
+    b
 }
 
 #[cfg(test)]
@@ -4331,6 +4323,26 @@ mod test {
             }
         }
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn fixed_dense_multiplication_rejects_sparse_coefficient_boxes() {
+        let coefficients = [Integer::from(2), Integer::from(3)];
+        let indices = [0, 1000];
+        assert!(
+            IntegerRing
+                .kernels()
+                .polynomial()
+                .unwrap()
+                .try_dense_mul(DensePolynomialMulRequest {
+                    output_len: 2001,
+                    left_coefficients: &coefficients,
+                    left_indices: &indices,
+                    right_coefficients: &coefficients,
+                    right_indices: &indices,
+                })
+                .is_none()
+        );
     }
 
     #[test]
