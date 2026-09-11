@@ -695,6 +695,7 @@ impl Float {
     /// a minimum of 53 bits (`f64` precision).
     pub fn parse(s: &str, prec: Option<u32>) -> Result<Self, String> {
         if let Some(prec) = prec {
+            Self::check_precision(prec)?;
             Ok(Float(
                 MultiPrecisionFloat::parse(s)
                     .map_err(|e| e.to_string())?
@@ -704,10 +705,10 @@ impl Float {
             let prec = if p.is_empty() {
                 53
             } else {
-                (p.parse::<f64>()
-                    .map_err(|e| format!("Invalid precision: {e}"))?
-                    * LOG2_10)
-                    .ceil() as u32
+                Self::decimal_digits_to_bits(
+                    p.parse::<f64>()
+                        .map_err(|e| format!("Invalid precision: {e}"))?,
+                )?
             };
 
             Ok(Float(
@@ -729,6 +730,31 @@ impl Float {
                     .map_err(|e| e.to_string())?
                     .complete(prec),
             ))
+        }
+    }
+
+    /// Convert a positive, finite decimal precision to a supported binary precision.
+    pub fn decimal_digits_to_bits(digits: f64) -> Result<u32, String> {
+        let bits = (digits * LOG2_10).ceil();
+        if !digits.is_finite() || digits <= 0. || bits > u32::MAX as f64 {
+            return Err(format!(
+                "Invalid decimal precision {digits}: expected a positive finite precision fitting in a u32 binary precision"
+            ));
+        }
+        let bits = bits as u32;
+        Self::check_precision(bits)?;
+        Ok(bits)
+    }
+
+    fn check_precision(prec: u32) -> Result<(), String> {
+        #[cfg(feature = "float-mpfr")]
+        let valid = (rug::float::prec_min()..=rug::float::prec_max()).contains(&prec);
+        #[cfg(not(feature = "float-mpfr"))]
+        let valid = prec > 0;
+        if valid {
+            Ok(())
+        } else {
+            Err(format!("Invalid binary precision {prec}"))
         }
     }
 
@@ -1061,5 +1087,29 @@ impl Rational {
     // Convert the rational number to a multi-precision float with precision `prec`.
     pub fn to_multi_prec_float(&self, prec: u32) -> Float {
         Float::from_rational_round(self, prec, RoundingDirection::Nearest)
+    }
+}
+
+#[cfg(test)]
+mod precision_tests {
+    use super::Float;
+
+    #[test]
+    fn invalid_precision_returns_errors() {
+        assert!(Float::parse("1", Some(0)).is_err());
+        for text in ["1`0", "1`-1", "1`NaN", "1`inf", "1`1e100"] {
+            assert!(Float::parse(text, None).is_err(), "{text}");
+        }
+        for digits in [0., -1., f64::NAN, f64::INFINITY, u32::MAX as f64] {
+            assert!(Float::decimal_digits_to_bits(digits).is_err());
+        }
+    }
+
+    #[test]
+    fn valid_precision_preserves_existing_parsing() {
+        assert_eq!(Float::decimal_digits_to_bits(40.).unwrap(), 133);
+        assert_eq!(Float::parse("1", Some(80)).unwrap().prec(), 80);
+        assert_eq!(Float::parse("1`40", None).unwrap().prec(), 133);
+        assert_eq!(Float::parse("1`", None).unwrap().prec(), 53);
     }
 }

@@ -40,14 +40,9 @@ impl From<Float> for PythonMultiPrecisionFloat {
 static PYDECIMAL: PyOnceLock<Py<PyType>> = PyOnceLock::new();
 
 #[cfg(feature = "python")]
-fn get_decimal(py: Python<'_>) -> &Py<PyType> {
-    PYDECIMAL.get_or_init(py, || {
-        py.import("decimal")
-            .unwrap()
-            .getattr("Decimal")
-            .unwrap()
-            .extract()
-            .unwrap()
+fn get_decimal(py: Python<'_>) -> PyResult<&Py<PyType>> {
+    PYDECIMAL.get_or_try_init(py, || -> PyResult<Py<PyType>> {
+        Ok(py.import("decimal")?.getattr("Decimal")?.extract()?)
     })
 }
 
@@ -55,13 +50,12 @@ fn get_decimal(py: Python<'_>) -> &Py<PyType> {
 impl<'py> IntoPyObject<'py> for PythonMultiPrecisionFloat {
     type Target = PyAny;
     type Output = Bound<'py, Self::Target>;
-    type Error = std::convert::Infallible;
+    type Error = PyErr;
 
     fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
-        get_decimal(py)
-            .call1(py, (self.0.to_string(),))
-            .expect("failed to call decimal.Decimal(value)")
-            .into_pyobject(py)
+        Ok(get_decimal(py)?
+            .call1(py, (self.0.to_string(),))?
+            .into_bound(py))
     }
 }
 
@@ -70,11 +64,8 @@ impl<'py> FromPyObject<'_, 'py> for PythonMultiPrecisionFloat {
     type Error = PyErr;
 
     fn extract(ob: Borrowed<'_, 'py, pyo3::PyAny>) -> PyResult<Self> {
-        if ob.is_instance(get_decimal(ob.py()).as_any().bind(ob.py()))? {
-            let a = ob
-                .call_method0("__str__")
-                .unwrap()
-                .extract::<PyBackedStr>()?;
+        if ob.is_instance(get_decimal(ob.py())?.as_any().bind(ob.py()))? {
+            let a = ob.call_method0("__str__")?.extract::<PyBackedStr>()?;
 
             if a == "NaN" {
                 return Ok(Float::with_val(53, f64::NAN).into());
@@ -115,7 +106,10 @@ impl<'py> FromPyObject<'_, 'py> for PythonMultiPrecisionFloat {
 
             Ok(Float::parse(
                 &a,
-                Some((digits as f64 * std::f64::consts::LOG2_10).ceil() as u32),
+                Some(
+                    Float::decimal_digits_to_bits(digits as f64)
+                        .map_err(exceptions::PyValueError::new_err)?,
+                ),
             )
             .map_err(|_| {
                 exceptions::PyValueError::new_err(format!("Not a floating point number: {a}"))
