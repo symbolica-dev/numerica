@@ -444,6 +444,8 @@ impl<F: Ring> SparseMatrix<F> {
     /// * `row_ptrs` - indices where new rows start within `values`, including an after-end index
     /// * `col_idcs` - column indices corresponding to entries of `values`
     /// * `field` - the field of the matrix entries
+    ///
+    /// Panics on invalid CSR data. Use [`Self::try_from_csr`] to receive an error instead.
     pub fn from_csr(
         nrows: u32,
         ncols: u32,
@@ -452,16 +454,8 @@ impl<F: Ring> SparseMatrix<F> {
         col_idcs: Vec<u32>,
         field: F,
     ) -> SparseMatrix<F> {
-        assert!(values.len() == col_idcs.len());
-        assert!(row_ptrs.len() == ((nrows + 1) as usize));
-        SparseMatrix {
-            values,
-            row_ptrs,
-            col_idcs,
-            nrows,
-            ncols,
-            field,
-        }
+        Self::try_from_csr(nrows, ncols, values, row_ptrs, col_idcs, field)
+            .expect("Invalid CSR matrix")
     }
 
     /// Create a new sparse matrix over the ring/field `F` from explicit CSR data
@@ -473,6 +467,8 @@ impl<F: Ring> SparseMatrix<F> {
     /// * `row_ptrs` - indices where new rows start within `values`, including an after-end index
     /// * `col_idcs` - column indices corresponding to entries of `values`
     /// * `field` - the field of the matrix entries
+    ///
+    /// Panics on invalid CSR data, with the same validation as [`Self::from_csr`].
     pub fn from_csr_slices(
         nrows: u32,
         ncols: u32,
@@ -481,16 +477,54 @@ impl<F: Ring> SparseMatrix<F> {
         col_idcs: &[u32],
         field: F,
     ) -> SparseMatrix<F> {
-        assert!(values.len() == col_idcs.len());
-        assert!(row_ptrs.len() == ((nrows + 1) as usize));
-        SparseMatrix {
-            values: values.to_vec(),
-            row_ptrs: row_ptrs.to_vec(),
-            col_idcs: col_idcs.to_vec(),
+        Self::from_csr(
+            nrows,
+            ncols,
+            values.to_vec(),
+            row_ptrs.to_vec(),
+            col_idcs.to_vec(),
+            field,
+        )
+    }
+
+    /// Construct a sparse matrix from validated CSR data.
+    /// Rows must contain strictly increasing column indices; explicit zero values are allowed.
+    pub fn try_from_csr(
+        nrows: u32,
+        ncols: u32,
+        values: Vec<F::Element>,
+        row_ptrs: Vec<usize>,
+        col_idcs: Vec<u32>,
+        field: F,
+    ) -> Result<Self, String> {
+        if values.len() != col_idcs.len()
+            || (nrows as usize).checked_add(1) != Some(row_ptrs.len())
+            || row_ptrs.first() != Some(&0)
+            || row_ptrs.last() != Some(&values.len())
+        {
+            return Err("Invalid CSR array lengths or row endpoints".into());
+        }
+        for row in row_ptrs.windows(2) {
+            if row[0] > row[1] || row[1] > values.len() {
+                return Err("CSR row pointers must be monotone and within the values array".into());
+            }
+            let cols = &col_idcs[row[0]..row[1]];
+            if cols.iter().any(|&col| col >= ncols)
+                || cols.windows(2).any(|pair| pair[0] >= pair[1])
+            {
+                return Err(
+                    "CSR columns must be in bounds and strictly increasing within each row".into(),
+                );
+            }
+        }
+        Ok(Self {
+            values,
+            row_ptrs,
+            col_idcs,
             nrows,
             ncols,
             field,
-        }
+        })
     }
 
     /// Create a sparse matrix from ordered triplets of (row, column, entry)
@@ -498,7 +532,8 @@ impl<F: Ring> SparseMatrix<F> {
     /// # Arguments
     /// * `nrows` - number of rows
     /// * `ncols` - number of columns
-    /// * `triplets` - ordered(!) triplets of (row, column, entry). Row and column indices are 0-indexed
+    /// * `triplets` - strictly ordered triplets of (row, column, entry), without duplicates.
+    ///   Row and column indices are 0-indexed and must be in bounds.
     /// * `field` - the ring/field of the matrix entries
     ///
     /// # Example
@@ -518,7 +553,18 @@ impl<F: Ring> SparseMatrix<F> {
         triplets: Vec<(u32, u32, F::Element)>,
         field: F,
     ) -> SparseMatrix<F> {
-        debug_assert!(triplets.is_sorted_by_key(|&(row, col, _)| (row, col)));
+        assert!(
+            triplets
+                .iter()
+                .all(|(row, col, _)| *row < nrows && *col < ncols),
+            "Sparse matrix index out of bounds"
+        );
+        assert!(
+            triplets
+                .windows(2)
+                .all(|pair| (pair[0].0, pair[0].1) < (pair[1].0, pair[1].1)),
+            "Sparse matrix triplets must be strictly ordered without duplicates"
+        );
         let mut ret = SparseMatrix {
             values: Vec::with_capacity(triplets.len()),
             row_ptrs: Vec::with_capacity((nrows + 1) as usize),

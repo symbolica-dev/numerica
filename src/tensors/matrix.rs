@@ -21,7 +21,6 @@
 use std::{
     fmt::Display,
     ops::{Add, AddAssign, Index, IndexMut, Mul, MulAssign, Neg, Sub, SubAssign},
-    slice::Chunks,
 };
 
 use colored::{Color, Colorize};
@@ -107,6 +106,10 @@ impl<F: Ring> Vector<F> {
 
     /// Take the Euclidean scalar product of two column or row vectors.
     pub fn dot(&self, rhs: &Self) -> F::Element {
+        assert_eq!(
+            self.field, rhs.field,
+            "Cannot combine different scalar domains"
+        );
         if self.data.len() != rhs.data.len() {
             panic!(
                 "Vectors do not have equal dimension: {} vs {}",
@@ -125,6 +128,10 @@ impl<F: Ring> Vector<F> {
 
     /// Compute the Euclidean cross product in three dimensions.
     pub fn cross_product(&self, rhs: &Self) -> Vector<F> {
+        assert_eq!(
+            self.field, rhs.field,
+            "Cannot combine different scalar domains"
+        );
         if self.data.len() != rhs.data.len() {
             panic!(
                 "Vectors do not have equal dimension: {} vs {}",
@@ -312,6 +319,9 @@ impl<F: EuclideanDomain> Matrix<F> {
     /// Write the first `max_col` columns of the matrix in (non-reduced) echelon form.
     /// Returns the matrix rank.
     pub fn partial_row_reduce_fraction_free(&mut self, max_col: u32) -> u32 {
+        if self.nrows == 0 {
+            return 0;
+        }
         let mut i = 0;
         for j in 0..max_col.min(self.ncols) {
             if self.field.is_zero(&self[(i, j)]) {
@@ -765,6 +775,10 @@ impl<F: Ring> Add<&Vector<F>> for &Vector<F> {
 
     /// Add two vectors.
     fn add(self, rhs: &Vector<F>) -> Self::Output {
+        assert_eq!(
+            self.field, rhs.field,
+            "Cannot combine different scalar domains"
+        );
         if self.data.len() != rhs.data.len() {
             panic!(
                 "Cannot add vectors of different dimensions: {}  vs {}",
@@ -785,6 +799,10 @@ impl<F: Ring> Add<&Vector<F>> for &Vector<F> {
 impl<F: Ring> AddAssign<&Vector<F>> for Vector<F> {
     ///Add two vectors in place.
     fn add_assign(&mut self, rhs: &Vector<F>) {
+        assert_eq!(
+            self.field, rhs.field,
+            "Cannot combine different scalar domains"
+        );
         if self.data.len() != rhs.data.len() {
             panic!(
                 "Cannot add vectors of different dimensions: {}  vs {}",
@@ -804,6 +822,10 @@ impl<F: Ring> Sub<&Vector<F>> for &Vector<F> {
 
     /// Subtract two vectors.
     fn sub(self, rhs: &Vector<F>) -> Self::Output {
+        assert_eq!(
+            self.field, rhs.field,
+            "Cannot combine different scalar domains"
+        );
         if self.data.len() != rhs.data.len() {
             panic!(
                 "Cannot subtract vectors of different dimensions: {}  vs {}",
@@ -823,6 +845,10 @@ impl<F: Ring> Sub<&Vector<F>> for &Vector<F> {
 
 impl<F: Ring> SubAssign<&Vector<F>> for Vector<F> {
     fn sub_assign(&mut self, rhs: &Vector<F>) {
+        assert_eq!(
+            self.field, rhs.field,
+            "Cannot combine different scalar domains"
+        );
         if self.data.len() != rhs.data.len() {
             panic!(
                 "Cannot subtract vectors of different dimensions: {}  vs {}",
@@ -874,7 +900,9 @@ impl<F: Ring> Matrix<F> {
     /// Create a new zeroed matrix with `nrows` rows and `ncols` columns.
     pub fn new(nrows: u32, ncols: u32, field: F) -> Matrix<F> {
         Matrix {
-            data: (0..nrows as usize * ncols as usize)
+            data: (0..(nrows as usize)
+                .checked_mul(ncols as usize)
+                .expect("Matrix dimensions overflow"))
                 .map(|_| field.zero())
                 .collect(),
             nrows,
@@ -886,7 +914,9 @@ impl<F: Ring> Matrix<F> {
     /// Create a new square matrix with `nrows` rows and ones on the main diagonal and zeroes elsewhere.
     pub fn identity(nrows: u32, field: F) -> Matrix<F> {
         Matrix {
-            data: (0..nrows as usize * nrows as usize)
+            data: (0..(nrows as usize)
+                .checked_mul(nrows as usize)
+                .expect("Matrix dimensions overflow"))
                 .map(|i| {
                     if i % nrows as usize == i / nrows as usize {
                         field.one()
@@ -927,7 +957,7 @@ impl<F: Ring> Matrix<F> {
         ncols: u32,
         field: F,
     ) -> Result<Matrix<F>, String> {
-        if data.len() == (nrows * ncols) as usize {
+        if Some(data.len()) == (nrows as usize).checked_mul(ncols as usize) {
             Ok(Matrix {
                 data,
                 nrows,
@@ -948,7 +978,9 @@ impl<F: Ring> Matrix<F> {
     pub fn from_nested_vec(matrix: Vec<Vec<F::Element>>, field: F) -> Result<Matrix<F>, String> {
         let mut data = vec![];
 
+        let rows = u32::try_from(matrix.len()).map_err(|_| "Too many matrix rows")?;
         let cols = matrix.first().map(|r| r.len()).unwrap_or(0);
+        let ncols = u32::try_from(cols).map_err(|_| "Too many matrix columns")?;
 
         for d in matrix {
             if d.len() != cols {
@@ -959,8 +991,8 @@ impl<F: Ring> Matrix<F> {
         }
 
         Ok(Matrix {
-            nrows: (data.len() / cols) as u32,
-            ncols: cols as u32,
+            nrows: rows,
+            ncols,
             data,
             field,
         })
@@ -981,9 +1013,14 @@ impl<F: Ring> Matrix<F> {
         &self.field
     }
 
-    /// Return an iterator over the rows of the matrix.
-    pub fn row_iter(&self) -> Chunks<'_, F::Element> {
-        self.data.chunks(self.ncols as usize)
+    /// Return an iterator over all rows, including empty rows when there are zero columns.
+    pub fn row_iter(
+        &self,
+    ) -> impl DoubleEndedIterator<Item = &[F::Element]> + ExactSizeIterator + Clone {
+        (0..self.nrows as usize).map(|row| {
+            let start = row * self.ncols as usize;
+            &self.data[start..start + self.ncols as usize]
+        })
     }
 
     /// Return true iff every entry in the matrix is zero.
@@ -993,10 +1030,9 @@ impl<F: Ring> Matrix<F> {
 
     /// Return true iff every non- main diagonal entry in the matrix is zero.
     pub fn is_diagonal(&self) -> bool {
-        self.data
-            .iter()
-            .enumerate()
-            .all(|(i, e)| i as u32 % self.ncols == i as u32 / self.ncols || self.field.is_zero(e))
+        self.data.iter().enumerate().all(|(i, e)| {
+            i % self.ncols as usize == i / self.ncols as usize || self.field.is_zero(e)
+        })
     }
 
     /// Transpose the matrix.
@@ -1034,8 +1070,10 @@ impl<F: Ring> Matrix<F> {
         if self.nrows == self.ncols {
             for i in 0..self.nrows {
                 for j in 0..i {
-                    self.data
-                        .swap((i * self.ncols + j) as usize, (j * self.ncols + i) as usize);
+                    self.data.swap(
+                        i as usize * self.ncols as usize + j as usize,
+                        j as usize * self.ncols as usize + i as usize,
+                    );
                 }
             }
 
@@ -1054,6 +1092,10 @@ impl<F: Ring> Matrix<F> {
 
     // Swap the i-th row with the j-th row, starting at column `start`.
     pub fn swap_rows(&mut self, mut i: u32, mut j: u32, start: u32) {
+        assert!(
+            i < self.nrows && j < self.nrows && start <= self.ncols,
+            "Matrix index out of bounds"
+        );
         if i == j {
             return;
         }
@@ -1062,21 +1104,28 @@ impl<F: Ring> Matrix<F> {
             (i, j) = (j, i);
         }
 
-        let (a, b) = self.data.split_at_mut((j * self.ncols) as usize);
+        let (a, b) = self.data.split_at_mut(j as usize * self.ncols as usize);
 
-        a[(i * self.ncols + start) as usize..((i + 1) * self.ncols) as usize]
+        a[i as usize * self.ncols as usize + start as usize
+            ..(i as usize + 1) * self.ncols as usize]
             .swap_with_slice(&mut b[start as usize..self.ncols as usize]);
     }
 
     // Swap the i-th column with the j-th column.
     pub fn swap_cols(&mut self, i: u32, j: u32) {
+        assert!(
+            i < self.ncols && j < self.ncols,
+            "Matrix column out of bounds"
+        );
         if i == j {
             return;
         }
 
         for k in 0..self.nrows {
-            self.data
-                .swap((k * self.ncols + i) as usize, (k * self.ncols + j) as usize);
+            self.data.swap(
+                k as usize * self.ncols as usize + i as usize,
+                k as usize * self.ncols as usize + j as usize,
+            );
         }
     }
 
@@ -1155,13 +1204,21 @@ impl<F: Ring> Matrix<F> {
 
     /// Augment the matrix with another matrix, e.g. create `[A B]` from matrix `A` and `B`.
     ///
-    /// Returns an error when the matrices do not have the same number of rows.
+    /// Returns an error for different row counts or scalar domains, or if the
+    /// combined column count overflows.
     pub fn augment(&self, matrix: &Matrix<F>) -> Result<Matrix<F>, MatrixError<F>> {
         if self.nrows != matrix.nrows {
             return Err(MatrixError::ShapeMismatch);
         }
 
-        let mut m = Matrix::new(self.nrows, self.ncols + matrix.ncols, self.field.clone());
+        if self.field != matrix.field {
+            return Err(MatrixError::FieldMismatch);
+        }
+        let ncols = self
+            .ncols
+            .checked_add(matrix.ncols)
+            .ok_or(MatrixError::ShapeMismatch)?;
+        let mut m = Matrix::new(self.nrows, ncols, self.field.clone());
 
         for (r, (r1, r2)) in self.row_iter().zip(matrix.row_iter()).enumerate() {
             m.data[r * m.ncols as usize..r * m.ncols as usize + self.ncols as usize]
@@ -1175,22 +1232,21 @@ impl<F: Ring> Matrix<F> {
     }
 
     /// Split the matrix into two matrices at the `index`-th column.
+    /// The index may range from zero through the number of columns, inclusive;
+    /// a split at either boundary produces a matrix with zero columns.
     pub fn split_col(&self, index: u32) -> Result<(Matrix<F>, Matrix<F>), MatrixError<F>> {
-        if index == 0 || index >= self.ncols - 1 {
+        if index > self.ncols {
             return Err(MatrixError::ShapeMismatch);
         }
 
         let mut m1 = Matrix::new(self.nrows, index, self.field.clone());
         let mut m2 = Matrix::new(self.nrows, self.ncols - index, self.field.clone());
-
-        // chunks could be 0!
-        for (r, (r1, r2)) in self.row_iter().zip(
-            m1.data
-                .chunks_mut(index as usize)
-                .zip(m2.data.chunks_mut(self.ncols as usize - index as usize)),
-        ) {
-            r1.clone_from_slice(&r[..index as usize]);
-            r2.clone_from_slice(&r[index as usize..]);
+        for (row, values) in self.row_iter().enumerate() {
+            let (left, right) = values.split_at(index as usize);
+            let left_start = row * m1.ncols as usize;
+            let right_start = row * m2.ncols as usize;
+            m1.data[left_start..left_start + left.len()].clone_from_slice(left);
+            m2.data[right_start..right_start + right.len()].clone_from_slice(right);
         }
 
         Ok((m1, m2))
@@ -1204,7 +1260,7 @@ impl<F: Ring> Matrix<F> {
 
         let f = &self.field;
         match self.nrows {
-            0 => Err(MatrixError::Singular),
+            0 => Ok(f.one()),
             1 => Ok(self.data[0].clone()),
             2 => Ok(f.sub(
                 &f.mul(&self.data[0], &self.data[3]),
@@ -1292,7 +1348,7 @@ impl<F: Ring> SelfRing for Matrix<F> {
         }
 
         self.data.iter().enumerate().all(|(i, e)| {
-            if i as u32 % self.ncols == i as u32 / self.ncols {
+            if i % self.ncols as usize == i / self.ncols as usize {
                 self.field.is_one(e)
             } else {
                 self.field.is_zero(e)
@@ -1393,7 +1449,8 @@ impl<F: Ring> Index<u32> for Matrix<F> {
     /// Get the `index`th row of the matrix.
     #[inline]
     fn index(&self, index: u32) -> &Self::Output {
-        &self.data[index as usize * self.nrows as usize..(index as usize + 1) * self.nrows as usize]
+        assert!(index < self.nrows, "Matrix row out of bounds");
+        &self.data[index as usize * self.ncols as usize..(index as usize + 1) * self.ncols as usize]
     }
 }
 
@@ -1403,7 +1460,11 @@ impl<F: Ring> Index<(u32, u32)> for Matrix<F> {
     /// Get the `i`th row and `j`th column of the matrix, where `index=(i,j)`.
     #[inline]
     fn index(&self, index: (u32, u32)) -> &Self::Output {
-        &self.data[(index.0 * self.ncols + index.1) as usize]
+        assert!(
+            index.0 < self.nrows && index.1 < self.ncols,
+            "Matrix index out of bounds"
+        );
+        &self.data[index.0 as usize * self.ncols as usize + index.1 as usize]
     }
 }
 
@@ -1411,7 +1472,11 @@ impl<F: Ring> IndexMut<(u32, u32)> for Matrix<F> {
     /// Get the `i`th row and `j`th column of the matrix, where `index=(i,j)`.
     #[inline]
     fn index_mut(&mut self, index: (u32, u32)) -> &mut F::Element {
-        &mut self.data[(index.0 * self.ncols + index.1) as usize]
+        assert!(
+            index.0 < self.nrows && index.1 < self.ncols,
+            "Matrix index out of bounds"
+        );
+        &mut self.data[index.0 as usize * self.ncols as usize + index.1 as usize]
     }
 }
 
@@ -1427,6 +1492,10 @@ impl<F: Ring> Add<&Matrix<F>> for &Matrix<F> {
 
     /// Add two matrices.
     fn add(self, rhs: &Matrix<F>) -> Self::Output {
+        assert_eq!(
+            self.field, rhs.field,
+            "Cannot combine different scalar domains"
+        );
         if self.nrows != rhs.nrows || self.ncols != rhs.ncols {
             panic!(
                 "Cannot add matrices of different dimensions: ({},{}) vs ({},{})",
@@ -1446,6 +1515,10 @@ impl<F: Ring> Add<&Matrix<F>> for &Matrix<F> {
 impl<F: Ring> AddAssign<&Matrix<F>> for Matrix<F> {
     ///Add two matrices in place.
     fn add_assign(&mut self, rhs: &Matrix<F>) {
+        assert_eq!(
+            self.field, rhs.field,
+            "Cannot combine different scalar domains"
+        );
         if self.nrows != rhs.nrows || self.ncols != rhs.ncols {
             panic!(
                 "Cannot add matrices of different dimensions: ({},{}) vs ({},{})",
@@ -1464,6 +1537,10 @@ impl<F: Ring> Sub<&Matrix<F>> for &Matrix<F> {
 
     /// Subtract two matrices.
     fn sub(self, rhs: &Matrix<F>) -> Self::Output {
+        assert_eq!(
+            self.field, rhs.field,
+            "Cannot combine different scalar domains"
+        );
         if self.nrows != rhs.nrows || self.ncols != rhs.ncols {
             panic!(
                 "Cannot add matrices of different dimensions: ({},{}) vs ({},{})",
@@ -1483,6 +1560,10 @@ impl<F: Ring> Sub<&Matrix<F>> for &Matrix<F> {
 impl<F: Ring> SubAssign<&Matrix<F>> for Matrix<F> {
     ///Add two matrices in place.
     fn sub_assign(&mut self, rhs: &Matrix<F>) {
+        assert_eq!(
+            self.field, rhs.field,
+            "Cannot combine different scalar domains"
+        );
         if self.nrows != rhs.nrows || self.ncols != rhs.ncols {
             panic!(
                 "Cannot add matrices of different dimensions: ({},{}) vs ({},{})",
@@ -1501,6 +1582,10 @@ impl<F: Ring> Mul<&Matrix<F>> for &Matrix<F> {
 
     /// Multiply two matrices.
     fn mul(self, rhs: &Matrix<F>) -> Self::Output {
+        assert_eq!(
+            self.field, rhs.field,
+            "Cannot combine different scalar domains"
+        );
         if self.ncols != rhs.nrows {
             panic!(
                 "Cannot multiply matrices because of a dimension mismatch: ({},{}) vs ({},{})",
@@ -1564,6 +1649,7 @@ pub enum MatrixError<F: Ring> {
     NotSquare,
     Singular,
     ShapeMismatch,
+    FieldMismatch,
     RightHandSideIsNotVector,
     ResultNotInDomain,
 }
@@ -1584,6 +1670,7 @@ impl<F: Ring> std::fmt::Display for MatrixError<F> {
             MatrixError::Inconsistent => write!(f, "The system is inconsistent"),
             MatrixError::NotSquare => write!(f, "The matrix is not square"),
             MatrixError::Singular => write!(f, "The matrix is singular"),
+            MatrixError::FieldMismatch => write!(f, "The scalar domains do not match"),
             MatrixError::ShapeMismatch => write!(f, "The shape of the matrix is not compatible"),
             MatrixError::RightHandSideIsNotVector => {
                 write!(f, "The right-hand side is not a vector")
@@ -1774,6 +1861,9 @@ impl<F: Field> Matrix<F> {
     /// Write the first `max_col` columns of the matrix in (non-reduced) echelon form.
     /// Returns the matrix rank.
     pub fn partial_row_reduce(&mut self, max_col: u32) -> u32 {
+        if self.nrows == 0 {
+            return 0;
+        }
         let zero = self.field.zero();
 
         let mut i = 0;

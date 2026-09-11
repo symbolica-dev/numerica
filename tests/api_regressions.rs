@@ -149,3 +149,114 @@ fn zero_powers_are_correct_in_all_finite_field_representations() {
     );
 }
 
+#[test]
+fn rectangular_matrix_indexing_checks_both_coordinates() {
+    let mut matrix = Matrix::from_linear((1..=6).map(Integer::from).collect(), 2, 3, Z).unwrap();
+    assert_eq!(matrix[0], [1, 2, 3]);
+    assert_eq!(matrix[1], [4, 5, 6]);
+    matrix[(1, 2)] = 9.into();
+    assert_eq!(matrix[(1, 2)], 9);
+    for index in [(0, 3), (2, 0), (u32::MAX, u32::MAX)] {
+        assert!(catch_unwind(|| &matrix[index]).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| matrix[index] = 0.into())).is_err());
+    }
+    assert!(catch_unwind(|| &matrix[2]).is_err());
+    assert!(Matrix::from_linear(Vec::new(), 65536, 65536, Z).is_err());
+}
+
+#[test]
+fn empty_matrix_shapes_work_in_iteration_and_algebra() {
+    let empty = Matrix::from_nested_vec(vec![], Q).unwrap();
+    assert_eq!((empty.nrows(), empty.ncols()), (0, 0));
+    assert_eq!(empty.det().unwrap(), Rational::from(1));
+    assert_eq!(empty.inv().unwrap(), empty);
+    let rows = Matrix::from_nested_vec(vec![vec![], vec![]], Q).unwrap();
+    assert_eq!((rows.nrows(), rows.ncols()), (2, 0));
+    assert_eq!(rows.row_iter().map(<[_]>::len).collect::<Vec<_>>(), [0, 0]);
+    assert_eq!(rows.row_iter().rev().count(), 2);
+    assert_eq!(rows[1].len(), 0);
+    assert!(catch_unwind(|| &rows[2]).is_err());
+    assert_eq!(rows.transpose().rank(), 0);
+    assert_eq!((&rows * &Matrix::new(0, 3, Q)), Matrix::new(2, 3, Q));
+    assert_eq!(rows.to_sparse().to_dense(), rows);
+    let unconstrained = rows.transpose();
+    assert_eq!(
+        unconstrained.solve_any(&Matrix::new(0, 1, Q)).unwrap(),
+        Matrix::new(2, 1, Q)
+    );
+}
+
+#[test]
+fn matrix_column_splitting_handles_every_boundary() {
+    let matrix = Matrix::from_linear((1..=6).map(Integer::from).collect(), 2, 3, Z).unwrap();
+    for split in 0..=3 {
+        let (left, right) = matrix.split_col(split).unwrap();
+        assert_eq!(left.ncols(), split as usize);
+        assert_eq!(left.augment(&right).unwrap(), matrix);
+    }
+    assert!(matrix.split_col(4).is_err());
+    let empty = Matrix::new(2, 0, Z);
+    let (left, right) = empty.split_col(0).unwrap();
+    assert_eq!(left.augment(&right).unwrap(), empty);
+}
+
+#[test]
+fn matrix_and_vector_operations_reject_mixed_fields() {
+    let f5 = Zp::new(5);
+    let f7 = Zp::new(7);
+    let a = Matrix::new_vec(vec![f5.one()], f5.clone());
+    let b = Matrix::new_vec(vec![f7.one()], f7.clone());
+    assert!(catch_unwind(|| &a + &b).is_err());
+    assert!(catch_unwind(|| &a - &b).is_err());
+    assert!(catch_unwind(|| &a * &b).is_err());
+    assert!(
+        catch_unwind(AssertUnwindSafe(|| {
+            let mut m = a.clone();
+            m += &b;
+        }))
+        .is_err()
+    );
+    assert!(
+        catch_unwind(AssertUnwindSafe(|| {
+            let mut m = a.clone();
+            m -= &b;
+        }))
+        .is_err()
+    );
+    assert!(matches!(a.augment(&b), Err(MatrixError::FieldMismatch)));
+    assert!(matches!(a.solve(&b), Err(MatrixError::FieldMismatch)));
+    let a = Vector::new(vec![f5.one()], f5);
+    let b = Vector::new(vec![f7.one()], f7);
+    assert!(catch_unwind(|| a.dot(&b)).is_err());
+    assert!(catch_unwind(|| &a + &b).is_err());
+}
+
+#[test]
+fn csr_validation_rejects_invalid_structure() {
+    for (rows, cols) in [
+        (vec![0, 99], vec![99]),
+        (vec![1, 1], vec![0]),
+        (vec![0, 0], vec![0]),
+        (vec![0, 1], vec![1]),
+        (vec![0], vec![0]),
+    ] {
+        assert!(SparseMatrix::try_from_csr(1, 1, vec![1.into()], rows, cols, Z).is_err());
+    }
+    assert!(SparseMatrix::try_from_csr(2, 2, vec![1.into()], vec![0, 2, 1], vec![0], Z).is_err());
+    for cols in [vec![1, 0], vec![0, 0]] {
+        assert!(
+            SparseMatrix::try_from_csr(1, 2, vec![1.into(), 2.into()], vec![0, 2], cols, Z)
+                .is_err()
+        );
+    }
+    let valid =
+        SparseMatrix::try_from_csr(2, 3, vec![2.into(), 3.into()], vec![0, 0, 2], vec![0, 2], Z)
+            .unwrap();
+    assert_eq!(valid.to_dense()[1], [2, 0, 3]);
+    assert!(
+        catch_unwind(|| SparseMatrix::from_csr(1, 1, vec![1.into()], vec![0, 99], vec![99], Z))
+            .is_err()
+    );
+    assert!(catch_unwind(|| SparseMatrix::from_triplets(1, 1, vec![(1, 0, 1.into())], Z)).is_err());
+}
+
