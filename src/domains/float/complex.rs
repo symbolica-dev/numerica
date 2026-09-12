@@ -1084,6 +1084,32 @@ impl<T: Real> Real for Complex<T> {
     }
 
     #[inline]
+    fn sech(&self) -> Self {
+        let ch = self.re.cosh();
+        if !ch.needs_rescaling() && ch.real_cmp(&ch.zero()).is_some() {
+            return Self::new(ch * self.im.cos(), self.re.sinh() * self.im.sin()).inv();
+        }
+        // cosh(x + iy) / cosh(x) = cos(y) + i tanh(x) sin(y).
+        // Both the numerator and denominator stay bounded at large |x|.
+        let inverse = Self::new(self.im.cos(), self.re.tanh() * self.im.sin()).inv();
+        let scale = self.re.sech();
+        Self::new(scale.clone() * inverse.re, scale * inverse.im)
+    }
+
+    #[inline]
+    fn csch(&self) -> Self {
+        let ch = self.re.cosh();
+        if !ch.needs_rescaling() && ch.real_cmp(&ch.zero()).is_some() {
+            return Self::new(self.re.sinh() * self.im.cos(), ch * self.im.sin()).inv();
+        }
+        // sinh(x + iy) / cosh(x) = tanh(x) cos(y) + i sin(y).
+        // Complex inversion also scales tiny denominators near the poles.
+        let inverse = Self::new(self.re.tanh() * self.im.cos(), self.im.sin()).inv();
+        let scale = self.re.sech();
+        Self::new(scale.clone() * inverse.re, scale * inverse.im)
+    }
+
+    #[inline]
     fn tanh(&self) -> Self {
         // Divide sinh(x) cosh(x) + i sin(y) cos(y) and its denominator
         // sinh(x)^2 + cos(y)^2 by cosh(x)^2. All intermediates are bounded,

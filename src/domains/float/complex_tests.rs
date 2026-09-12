@@ -11,6 +11,46 @@ fn close(actual: f64, expected: f64) {
 }
 
 #[test]
+fn reciprocal_hyperbolic_functions_avoid_overflow() {
+    for x in [-1e13, 1e13, f64::NEG_INFINITY, f64::INFINITY] {
+        for y in [0.0, 0.75] {
+            let z = Complex::new(x, y);
+            for result in [z.sech(), z.csch()] {
+                assert_eq!(result.re, 0.0, "{z}: {result}");
+                assert_eq!(result.im, 0.0, "{z}: {result}");
+            }
+        }
+    }
+
+    for x in [0.0, 1e-200, 0.25, 20.0, 400.0, 711.0, 745.0, 745.5] {
+        for sign in [-1.0, 1.0] {
+            for y in [0.0, 1e-200, 0.75, std::f64::consts::FRAC_PI_2] {
+                if x == 0.0 && y == 0.0 {
+                    continue;
+                }
+                let z = Complex::new(sign * x, y);
+                let reference =
+                    Complex::new(Float::with_val(256, sign * x), Float::with_val(256, y));
+                for (actual, expected) in [
+                    (z.sech(), reference.cosh().inv().to_f64()),
+                    (z.csch(), reference.sinh().inv().to_f64()),
+                ] {
+                    close(actual.re, expected.re);
+                    close(actual.im, expected.im);
+                    if y == 0.0 && expected.re != 0.0 {
+                        assert_ne!(actual.re, 0.0, "lost representable tail at {z}");
+                    }
+                }
+                if y == 0.0 {
+                    close(z.re.sech(), reference.re.cosh().inv().to_f64());
+                    close(z.re.csch(), reference.re.sinh().inv().to_f64());
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn complex_functions_against_independent_reference() {
     // Generated with mpmath at 800 decimal digits from the exact f64 inputs.
     // Each row contains sqrt, log, asinh, acosh, asin, acos and atanh.

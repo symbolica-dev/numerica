@@ -222,6 +222,22 @@ pub trait Real: FloatLike {
     fn sinh(&self) -> Self;
     fn cosh(&self) -> Self;
     fn tanh(&self) -> Self;
+    /// Reciprocal hyperbolic cosine, without overflowing an intermediate cosh.
+    #[inline]
+    fn sech(&self) -> Self {
+        // Split the exponential so that rounding exp(-|x|) to zero does not
+        // discard a representable subnormal value of 2 exp(-|x|).
+        let e = (-self.norm() / self.from_usize(2)).exp();
+        let e2 = e.clone() * &e;
+        (e.clone() + &e) * e / (e2.one() + e2.clone() * e2)
+    }
+
+    /// Reciprocal hyperbolic sine, retaining accuracy near zero and at infinity.
+    #[inline]
+    fn csch(&self) -> Self {
+        self.sech() / self.tanh()
+    }
+
     fn asinh(&self) -> Self;
     fn acosh(&self) -> Self;
     fn atanh(&self) -> Self;
