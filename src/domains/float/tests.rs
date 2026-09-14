@@ -5,6 +5,172 @@ use crate::domains::integer::Integer;
 use super::DoubleFloat;
 use super::{Complex, ErrorPropagatingFloat, Float, FloatLike, Rational, Real, RealLike};
 
+fn assert_equal_hash<T: Eq + std::hash::Hash + std::fmt::Debug>(left: T, right: T) {
+    use std::hash::{DefaultHasher, Hasher};
+    assert_eq!(left, right);
+    let hash = |value: &T| {
+        let mut state = DefaultHasher::new();
+        value.hash(&mut state);
+        state.finish()
+    };
+    assert_eq!(hash(&left), hash(&right), "{left:?} and {right:?}");
+    assert!(std::collections::HashSet::from([left]).contains(&right));
+}
+
+#[test]
+fn signed_zero_hashes() {
+    assert_equal_hash(super::F64::from(0.), super::F64::from(-0.));
+    assert_equal_hash(DoubleFloat::from(0.), DoubleFloat::from(-0.));
+    assert_equal_hash(Float::with_val(128, 0.), Float::with_val(128, -0.));
+}
+
+#[test]
+fn signed_zero_norm_is_positive_zero() {
+    let zero = Float::with_val(128, -0.).norm();
+    assert_eq!(zero, Float::with_val(128, 0.));
+    assert!(!zero.is_sign_negative());
+}
+
+#[test]
+fn float_sign_predicates() {
+    for value in [
+        f64::NEG_INFINITY,
+        -1.,
+        -f64::from_bits(1),
+        -0.,
+        0.,
+        f64::from_bits(1),
+        1.,
+        f64::INFINITY,
+    ] {
+        let float = Float::with_val(128, value);
+        assert_eq!(float.is_negative(), value < 0., "{value}");
+        assert_eq!(
+            float.is_sign_negative(),
+            value.is_sign_negative(),
+            "{value}"
+        );
+    }
+    for value in [f64::NAN, -f64::NAN] {
+        assert!(!Float::with_val(128, value).is_negative());
+    }
+}
+
+#[test]
+fn float_copy_sign_preserves_signed_zero() {
+    for sign in [0f64, -0., 1., -1.] {
+        for value in [0f64, -0., 2., -2.] {
+            let result = Float::with_val(128, value).copy_sign(&Float::with_val(128, sign));
+            assert_eq!(result.to_f64(), value.copysign(sign));
+            assert_eq!(result.is_sign_negative(), sign.is_sign_negative());
+        }
+    }
+}
+
+#[test]
+fn float_signed_zero_branch_cuts() {
+    for sign in [0f64, -0.] {
+        let zero = Float::with_val(128, sign);
+        let one = Float::with_val(128, 1.);
+        for x in [0., -0., 1., -1.] {
+            let result = zero.atan2(&Float::with_val(128, x));
+            assert_eq!(result.to_f64(), sign.atan2(x));
+            assert_eq!(result.is_sign_negative(), sign.is_sign_negative());
+        }
+        let z = Complex::new(-one.clone(), zero);
+        let square_root = z.sqrt();
+        assert_eq!(square_root.re.to_f64(), 0.);
+        assert_eq!(square_root.im.to_f64(), 1f64.copysign(sign));
+        let logarithm = z.log();
+        assert_eq!(logarithm.re.to_f64(), 0.);
+        assert_eq!(logarithm.im.to_f64(), std::f64::consts::PI.copysign(sign));
+    }
+}
+
+#[test]
+fn double_float_zero_low_component_hashes() {
+    assert_equal_hash(DoubleFloat::from(-1.), -DoubleFloat::from(1.));
+}
+
+#[test]
+fn float_equality_across_precisions() {
+    for value in [0., -0., 1., -1.5, f64::INFINITY, f64::NEG_INFINITY] {
+        assert_eq!(Float::with_val(53, value), Float::with_val(200, value));
+    }
+}
+
+#[test]
+fn float_hashes_across_precisions() {
+    for value in [
+        0.,
+        -0.,
+        1.,
+        -1.5,
+        f64::MIN_POSITIVE,
+        f64::from_bits(1),
+        f64::MAX,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NAN,
+        -f64::NAN,
+    ] {
+        for precision in [53, 64, 65, 128, 200, 256] {
+            assert_equal_hash(
+                Float::with_val(53, value),
+                Float::with_val(precision, value),
+            );
+        }
+    }
+}
+
+#[test]
+#[cfg(feature = "float-astro")]
+fn astro_raw_signed_zero_hashes() {
+    assert_equal_hash(
+        Float::with_val(128, 0.).into_raw(),
+        Float::with_val(128, -0.).into_raw(),
+    );
+    assert_equal_hash(
+        Float::with_val(53, 1.).into_raw(),
+        Float::with_val(200, 1.).into_raw(),
+    );
+    assert_equal_hash(
+        Float::with_val(53, f64::NAN).into_raw(),
+        Float::with_val(200, -f64::NAN).into_raw(),
+    );
+}
+
+#[test]
+fn float_internal_ordering_distinguishes_nan() {
+    use crate::domains::InternalOrdering;
+    fn check<T: Eq + InternalOrdering>(values: Vec<T>) {
+        for left in &values {
+            for right in &values {
+                assert_eq!(left == right, left.internal_cmp(right).is_eq());
+                assert_eq!(left.internal_cmp(right), right.internal_cmp(left).reverse());
+                for third in &values {
+                    if left.internal_cmp(right).is_le() && right.internal_cmp(third).is_le() {
+                        assert!(left.internal_cmp(third).is_le());
+                    }
+                }
+            }
+        }
+    }
+    let values = [
+        f64::NEG_INFINITY,
+        -1.,
+        -0.,
+        0.,
+        1.,
+        f64::INFINITY,
+        f64::NAN,
+        -f64::NAN,
+    ];
+    check(values.map(super::F64::from).to_vec());
+    check(values.map(DoubleFloat::from).to_vec());
+    check(values.map(|v| Float::with_val(128, v)).to_vec());
+}
+
 fn eval_test<T: Real>(v: &[T]) -> T {
     v[0].sqrt() + v[1].log() + v[1].sin() - v[0].cos() + v[1].tan() - v[2].asin() + v[3].acos()
         - v[0].atan2(&v[1])

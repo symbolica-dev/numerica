@@ -87,18 +87,18 @@ impl Hash for Float {
             return;
         }
 
-        self.0.get_exp().hash(state);
-        if let Some(s) = self.0.get_significand() {
-            s.hash(state);
-        } else {
-            state.write_u64(0x7ff8000000000000)
-        }
+        // Backend hashes omit precision-dependent zero padding in the significand.
+        #[cfg(feature = "float-mpfr")]
+        self.0.as_ord().hash(state);
+        #[cfg(feature = "float-astro")]
+        self.0.hash(state);
     }
 }
 
 impl InternalOrdering for Float {
     fn internal_cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.partial_cmp(other).unwrap_or(std::cmp::Ordering::Equal)
+        self.partial_cmp(other)
+            .unwrap_or_else(|| self.0.is_nan().cmp(&other.0.is_nan()))
     }
 }
 
@@ -668,7 +668,16 @@ impl Float {
         self.0.is_finite()
     }
 
+    /// Return whether the value is strictly less than zero.
+    /// Both signed zeros and NaN return false; negative infinity returns true.
     pub fn is_negative(&self) -> bool {
+        self.0.is_sign_negative() && !self.0.is_zero() && !self.0.is_nan()
+    }
+
+    /// Return whether the sign bit is negative, including for negative zero.
+    /// Use this for sign copying and signed-zero branch-cut conventions.
+    /// For NaN, the result depends on the backend's representation.
+    pub fn is_sign_negative(&self) -> bool {
         self.0.is_sign_negative()
     }
 
@@ -973,7 +982,7 @@ impl Real for Float {
 
     #[inline(always)]
     fn copy_sign(&self, sign: &Self) -> Self {
-        if sign.is_negative() {
+        if sign.is_sign_negative() {
             -self.norm()
         } else {
             self.norm()

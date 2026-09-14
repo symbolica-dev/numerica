@@ -201,18 +201,35 @@ mod astro {
         }
     }
 
-    #[derive(Clone, PartialEq)]
+    #[derive(Clone)]
     pub struct MultiPrecisionFloat {
         value: BigFloat,
         prec: u32,
+    }
+
+    impl PartialEq for MultiPrecisionFloat {
+        fn eq(&self, other: &Self) -> bool {
+            (self.is_nan() && other.is_nan()) || self.value == other.value
+        }
     }
 
     impl Eq for MultiPrecisionFloat {}
 
     impl Hash for MultiPrecisionFloat {
         fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-            self.prec.hash(state);
-            self.value.to_string().hash(state);
+            if self.is_nan() {
+                state.write_u64(0x7ff8000000000000);
+            } else if self.is_zero() {
+                state.write_u64(0);
+            } else {
+                self.is_sign_negative().hash(state);
+                self.get_exp().hash(state);
+                if let Some((words, _, _, _, _)) = self.value.as_raw_parts() {
+                    // Equal values can have extra low zero words at higher precision.
+                    let first = words.iter().position(|&word| word != 0).unwrap();
+                    words[first..].hash(state);
+                }
+            }
         }
     }
 

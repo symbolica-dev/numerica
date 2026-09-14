@@ -173,7 +173,8 @@ fn real_input(value: &Bound<'_, PyAny>, precision: Option<u32>) -> PyResult<Floa
         ));
     }
     if let Ok(value) = value.cast::<PyString>() {
-        return Float::parse(&value.to_cow()?, precision).map_err(exceptions::PyValueError::new_err);
+        return Float::parse(&value.to_cow()?, precision)
+            .map_err(exceptions::PyValueError::new_err);
     }
     if value.is_instance_of::<PyInt>()
         || value.is_instance(decimal_type(value.py())?.bind(value.py()))?
@@ -327,11 +328,7 @@ fn to_decimal<'py>(
         },));
     }
     if value.is_zero() {
-        return decimal.call1((if value.as_raw().is_sign_negative() {
-            "-0"
-        } else {
-            "0"
-        },));
+        return decimal.call1((if value.is_sign_negative() { "-0" } else { "0" },));
     }
     let ratio = value
         .try_to_rational()
@@ -2157,7 +2154,7 @@ impl PythonComplexFloat {
         if !z.is_finite() {
             return None;
         }
-        let signed = |v: Float, sign: &Float| if sign.is_negative() { -v } else { v };
+        let signed = |v: Float, sign: &Float| if sign.is_sign_negative() { -v } else { v };
         let half_pi = || z.re.pi() / z.re.from_i64(2);
         let one = z.re.one();
         let a = z.re.norm();

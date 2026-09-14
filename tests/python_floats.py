@@ -139,6 +139,20 @@ class PythonFloats(unittest.TestCase):
         self.assertEqual(Float(4, precision=100).sqrt(), 2)
         self.assertEqual(Float(0).exp(), 1)
 
+    def test_zero_to_negative_zero_power(self):
+        for exponent in [-0.0, Decimal("-0"), Float("-0")]:
+            with self.subTest(exponent=exponent):
+                self.assertEqual(Float(0).powf(exponent), 1)
+                self.assertEqual(Float(0) ** exponent, 1)
+                self.assertEqual(ComplexFloat(0).powf(exponent), 1)
+        for exponent in [-1, Float(-1)]:
+            with self.assertRaises(ZeroDivisionError):
+                Float(0).powf(exponent)
+            with self.assertRaises(ZeroDivisionError):
+                Float(0) ** exponent
+            with self.assertRaises(ZeroDivisionError):
+                ComplexFloat(0).powf(exponent)
+
     def test_numeric_equality_nan_and_hashing(self):
         self.assertEqual(Float(1, precision=53), Float(1, precision=200))
         self.assertEqual(Float(1), Decimal(1))

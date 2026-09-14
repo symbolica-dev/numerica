@@ -784,7 +784,8 @@ impl PartialOrd for F64 {
 
 impl InternalOrdering for F64 {
     fn internal_cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.partial_cmp(other).unwrap_or(std::cmp::Ordering::Equal)
+        self.partial_cmp(other)
+            .unwrap_or_else(|| self.0.is_nan().cmp(&other.0.is_nan()))
     }
 }
 
