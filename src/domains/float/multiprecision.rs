@@ -163,6 +163,14 @@ impl Add<&Float> for Float {
     /// The precision of the output will be at most 2 binary digits too high.
     #[inline]
     fn add(mut self, rhs: &Self) -> Self::Output {
+        if rhs.is_zero() && !self.is_zero() {
+            return self;
+        }
+
+        if self.is_zero() && !rhs.is_zero() {
+            return rhs.clone();
+        }
+
         let sp = self.prec();
         if self.prec() < rhs.prec() {
             self.set_prec(rhs.prec());
@@ -205,6 +213,14 @@ impl Sub<&Float> for Float {
 
     #[inline]
     fn sub(mut self, rhs: &Self) -> Self::Output {
+        if rhs.is_zero() && !self.is_zero() {
+            return self;
+        }
+
+        if self.is_zero() && !rhs.is_zero() {
+            return -rhs.clone();
+        }
+
         let sp = self.prec();
         if self.prec() < rhs.prec() {
             self.set_prec(rhs.prec());
@@ -294,6 +310,13 @@ impl Div<Float> for Float {
 impl AddAssign<&Float> for Float {
     #[inline]
     fn add_assign(&mut self, rhs: &Float) {
+        if rhs.is_zero() && !self.is_zero() {
+            return;
+        }
+        if self.is_zero() && !rhs.is_zero() {
+            *self = rhs.clone();
+            return;
+        }
         let sp = self.prec();
         if self.prec() < rhs.prec() {
             self.set_prec(rhs.prec());
@@ -323,6 +346,13 @@ impl AddAssign<Float> for Float {
 impl SubAssign<&Float> for Float {
     #[inline]
     fn sub_assign(&mut self, rhs: &Float) {
+        if rhs.is_zero() && !self.is_zero() {
+            return;
+        }
+        if self.is_zero() && !rhs.is_zero() {
+            *self = -rhs.clone();
+            return;
+        }
         let sp = self.prec();
         if self.prec() < rhs.prec() {
             self.set_prec(rhs.prec());
@@ -1165,6 +1195,32 @@ impl Rational {
 #[cfg(test)]
 mod precision_tests {
     use super::Float;
+
+    #[test]
+    fn zero_does_not_restore_lost_precision() {
+        let x = Float::with_val(40, 1) - Float::with_val(40, 1.0 - 2.0_f64.powi(-30));
+        assert!(x.prec() < 40);
+        let zero = Float::with_val(1000, 0);
+        for result in [
+            x.clone() + &zero,
+            zero.clone() + &x,
+            x.clone() - &zero,
+            zero.clone() - &x,
+        ] {
+            assert_eq!(result.prec(), x.prec());
+        }
+        let mut result = x.clone();
+        result += &zero;
+        assert_eq!(result.prec(), x.prec());
+        result -= &zero;
+        assert_eq!(result.prec(), x.prec());
+        let mut result = zero.clone();
+        result += &x;
+        assert_eq!(result.prec(), x.prec());
+        let mut result = zero;
+        result -= &x;
+        assert_eq!(result.prec(), x.prec());
+    }
 
     #[test]
     fn invalid_precision_returns_errors() {
