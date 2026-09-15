@@ -5011,7 +5011,7 @@ mod test {
 
     #[test]
     fn owned_large_remainder_by_borrowed_large_divisor() {
-        let modulus = (Integer::one() << 200u32) + 123;
+        let modulus: Integer = (Integer::one() << 200u32) + 123;
         let numerator: Integer = &modulus * 7 + 45;
         let negative_numerator = -&numerator;
         let negative_modulus = -&modulus;

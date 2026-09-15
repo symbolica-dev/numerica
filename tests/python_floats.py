@@ -229,6 +229,9 @@ class CompleteFloatAPI(unittest.TestCase):
             for trait in traits:
                 body = source.split(f"pub trait {trait}:", 1)[1].split("\n}", 1)[0]
                 for name in re.findall(r"    fn (\w+)", body):
+                    # These Rust trait methods are not part of the Python API.
+                    if name in {"real_cmp", "needs_rescaling", "copy_sign"}:
+                        continue
                     with self.subTest(cls=cls.__name__, trait=trait, method=name):
                         self.assertTrue(callable(getattr(cls, name, None)))
 
@@ -282,6 +285,73 @@ class CompleteFloatAPI(unittest.TestCase):
                 Float(0).powf(exponent)
             with self.assertRaises(ZeroDivisionError):
                 Float(0) ** exponent
+
+    def test_stable_elementary_functions(self):
+        for cls, value, reference in [
+            (Float, 0.375, math),
+            (ComplexFloat, 0.375 + 0.25j, cmath),
+            (ComplexFloat, -2 + 0.25j, cmath),
+            (ComplexFloat, -2 - 0.25j, cmath),
+        ]:
+            x = cls(value, precision=200)
+            for name, expected in [
+                ("log1p", reference.log(1 + value)),
+                ("sech", 1 / reference.cosh(value)),
+                ("csch", 1 / reference.sinh(value)),
+            ]:
+                with self.subTest(cls=cls.__name__, method=name, value=value):
+                    result = getattr(x, name)()
+                    self.assertIsInstance(result, cls)
+                    self.assertLess(abs((float(result) if cls is Float else complex(result)) - expected), 2e-14)
+                    self.assertGreater(result.precision, 180)
+
+        for cls in [Float, ComplexFloat]:
+            tiny = cls("1e-100", precision=200)
+            self.assertLess(abs(tiny.log1p() / tiny - 1), Decimal("1e-55"))
+            self.assertLess(abs(tiny.csch() * tiny - 1), Decimal("1e-55"))
+            for value in ["1e13", "-1e13"]:
+                x = cls(value, precision=200)
+                self.assertEqual(x.sech(), 0)
+                self.assertEqual(x.csch(), 0)
+            self.assertEqual(cls(0).sech(), 1)
+
+        for x in [-2.0, -0.5, 0.0, 2.0]:
+            for y in [0.0, -0.0]:
+                z = complex(x, y)
+                actual = complex(ComplexFloat(z, precision=200).log1p())
+                expected = cmath.log(complex(1 + x, y))
+                self.assertLess(abs(actual - expected), 2e-14)
+                self.assertEqual(math.copysign(1, actual.imag), math.copysign(1, y))
+        for y in [0.0, -0.0]:
+            result = complex(ComplexFloat(complex(-1, y), precision=200).log1p())
+            self.assertEqual(result.real, -math.inf)
+            self.assertEqual(result.imag, 0)
+            self.assertEqual(math.copysign(1, result.imag), math.copysign(1, y))
+
+    def test_hypot_numeric_operands_and_scaling(self):
+        x = Float(3, precision=200)
+        for other in [4, 4.0, Decimal(4), Float(4, precision=200)]:
+            result = x.hypot(other)
+            self.assertIsInstance(result, Float)
+            self.assertEqual(result, 5)
+            self.assertGreater(result.precision, 180)
+        z = ComplexFloat(3, 4, precision=200)
+        for other in [12, 12.0, 12j, Decimal(12), Float(12, precision=200),
+                      ComplexFloat(0, 12, precision=200)]:
+            result = z.hypot(other)
+            self.assertIsInstance(result, Float)
+            self.assertLess(abs(result - 13), Decimal("1e-55"))
+            self.assertGreater(result.precision, 180)
+        for cls in [Float, ComplexFloat]:
+            for scale in ["1e1000", "1e-1000"]:
+                x = cls(scale, precision=200)
+                self.assertLess(abs(x.hypot(x) / abs(x) - Float(2, precision=200).sqrt()),
+                                Decimal("1e-55"))
+            for invalid in ["4", (3, 4), object()]:
+                with self.assertRaises(TypeError):
+                    cls(3).hypot(invalid)
+        with self.assertRaises(TypeError):
+            Float(3).hypot(4j)
 
     def test_complex_elementary_functions_and_powers(self):
         names = ["sqrt", "exp", "sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh", "asinh", "acosh", "atanh"]

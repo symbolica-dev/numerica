@@ -752,6 +752,10 @@ impl PythonFloat {
     fn log(&self) -> Self {
         self.ln()
     }
+    /// Return log(1+self), retaining small increments lost when adding one.
+    fn log1p(&self) -> Self {
+        Self(self.0.log1p())
+    }
     /// Return the sine, with the argument in radians.
     fn sin(&self) -> Self {
         Self(self.0.sin())
@@ -783,6 +787,14 @@ impl PythonFloat {
     /// Return the hyperbolic tangent with accuracy tracking.
     fn tanh(&self) -> Self {
         Self(self.0.tanh())
+    }
+    /// Return the reciprocal hyperbolic cosine without overflowing an intermediate cosh.
+    fn sech(&self) -> Self {
+        Self(self.0.sech())
+    }
+    /// Return the reciprocal hyperbolic sine, retaining accuracy near zero and at infinity.
+    fn csch(&self) -> Self {
+        Self(self.0.csch())
     }
     /// Return the inverse hyperbolic sine.
     fn asinh(&self) -> Self {
@@ -900,6 +912,16 @@ impl PythonFloat {
     /// Return the magnitude as a real Float, equivalent to abs(self).
     fn norm(&self) -> Self {
         self.__abs__()
+    }
+    /// Return sqrt(self**2 + other**2), avoiding unnecessary overflow and underflow.
+    ///
+    /// Parameters
+    /// ----------
+    /// other : Float, int, float or Decimal
+    ///     Second coordinate. Native numbers use this value's precision;
+    ///     existing Float operands retain their precision.
+    fn hypot(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(Self(self.0.hypot(&self.required_operand(other)?)))
     }
     /// Return zero at this value's precision.
     fn zero(&self) -> Self {
@@ -1601,6 +1623,16 @@ impl PythonComplexFloat {
     fn log(&self) -> Self {
         self.ln()
     }
+    /// Return the principal log(1+self), retaining small increments and signed-zero branch cuts.
+    fn log1p(&self) -> Self {
+        if self.0.im.is_zero() {
+            if self.0.re >= -self.0.re.one() {
+                return Self(Complex::new(self.0.re.log1p(), self.0.im.clone()));
+            }
+            return Self(Complex::new(self.0.re.one() + &self.0.re, self.0.im.clone()).log());
+        }
+        Self(self.0.log1p())
+    }
     /// Return the sine, with the argument in radians.
     fn sin(&self) -> Self {
         Self(self.0.sin())
@@ -1628,6 +1660,14 @@ impl PythonComplexFloat {
     /// Return the hyperbolic tangent with accuracy tracking.
     fn tanh(&self) -> Self {
         Self(self.0.tanh())
+    }
+    /// Return the reciprocal hyperbolic cosine without overflowing an intermediate cosh.
+    fn sech(&self) -> Self {
+        Self(self.0.sech())
+    }
+    /// Return the reciprocal hyperbolic sine, retaining accuracy near zero and at infinity.
+    fn csch(&self) -> Self {
+        Self(self.0.csch())
     }
     /// Return the principal complex inverse hyperbolic sine.
     fn asinh(&self) -> Self {
@@ -1782,6 +1822,17 @@ impl PythonComplexFloat {
     /// Return the magnitude as a real Float, equivalent to abs(self).
     fn norm(&self) -> PythonFloat {
         self.__abs__()
+    }
+    /// Return sqrt(abs(self)**2 + abs(other)**2) as a real Float, using scaled arithmetic.
+    ///
+    /// Parameters
+    /// ----------
+    /// other : Float, ComplexFloat, int, float, complex or Decimal
+    ///     Second coordinate. Native numbers use this value's precision;
+    ///     existing arbitrary-precision scalars retain their precision.
+    fn hypot(&self, other: &Bound<'_, PyAny>) -> PyResult<PythonFloat> {
+        let rhs = self.method_operand(other)?;
+        Ok(PythonFloat(self.0.norm().re.hypot(&rhs.norm().re)))
     }
     /// Return zero at this value's precision, preserving component precisions.
     fn zero(&self) -> Self {
