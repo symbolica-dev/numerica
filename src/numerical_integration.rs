@@ -43,6 +43,9 @@ use rand::{Rng, RngCore, SeedableRng};
 
 use crate::domains::float::{Constructible, Real, RealLike};
 
+/// Caller-driven randomized rank-one lattice integration, separate from Monte Carlo grids.
+pub mod qmc;
+
 /// Keep track of statistical quantities, such as the average,
 /// the error and the chi-squared of samples added over multiple
 /// iterations.
@@ -1007,7 +1010,7 @@ impl<T: Real + Constructible + Copy + RealLike + PartialOrd> DiscreteGrid<T> {
         for bin in &mut d.bins {
             bin.accumulator.clear_samples();
 
-            bin.sub_grid.as_ref().map(|g| g.clone_without_samples());
+            bin.sub_grid = bin.sub_grid.as_ref().map(Grid::clone_without_samples);
         }
 
         d.accumulator.clear_samples();
@@ -1709,6 +1712,64 @@ impl MonteCarloRng {
 
 #[cfg(test)]
 mod test {
+    #[test]
+    fn clone_without_samples_clears_nested_training_and_preserves_proposal() {
+        use super::{ContinuousGrid, DiscreteGrid, Grid, MonteCarloRng, Sample};
+        let continuous = ContinuousGrid::<f64>::new(2, 4, 4, None, false).unwrap();
+        let inner =
+            DiscreteGrid::new(vec![Some(Grid::Continuous(continuous))], 100.0, false).unwrap();
+        let mut original =
+            DiscreteGrid::new(vec![Some(Grid::Discrete(inner))], 100.0, false).unwrap();
+        let mut rng = MonteCarloRng::new(71, 0);
+        let mut sample = Sample::new();
+        for _ in 0..7 {
+            original.sample(&mut rng, &mut sample);
+            original.add_training_sample(&sample, 2.0).unwrap();
+        }
+        let mut fresh = original.clone_without_samples();
+        assert_eq!(original.accumulator.new_samples, 7);
+        assert_eq!(fresh.accumulator.new_samples, 0);
+        assert_eq!(original.bins[0].pdf, fresh.bins[0].pdf);
+        let Grid::Discrete(old_inner) = original.bins[0].sub_grid.as_ref().unwrap() else {
+            panic!()
+        };
+        let Grid::Discrete(new_inner) = fresh.bins[0].sub_grid.as_ref().unwrap() else {
+            panic!()
+        };
+        assert_eq!(old_inner.accumulator.new_samples, 7);
+        assert_eq!(new_inner.accumulator.new_samples, 0);
+        assert_eq!(new_inner.bins[0].accumulator.new_samples, 0);
+        let Grid::Continuous(old_leaf) = old_inner.bins[0].sub_grid.as_ref().unwrap() else {
+            panic!()
+        };
+        let Grid::Continuous(new_leaf) = new_inner.bins[0].sub_grid.as_ref().unwrap() else {
+            panic!()
+        };
+        assert_eq!(old_leaf.accumulator.new_samples, 7);
+        assert_eq!(new_leaf.accumulator.new_samples, 0);
+        for (old, new) in old_leaf
+            .continuous_dimensions
+            .iter()
+            .zip(&new_leaf.continuous_dimensions)
+        {
+            assert_eq!(old.partitioning, new.partitioning);
+            assert!(new.bin_accumulator.iter().all(|bin| bin.new_samples == 0));
+        }
+        // A fresh worker contributes only its own samples when merged back.
+        fresh.sample(&mut rng, &mut sample);
+        fresh.add_training_sample(&sample, 3.0).unwrap();
+        original.merge(&fresh).unwrap();
+        assert_eq!(original.accumulator.new_samples, 8);
+        let Grid::Discrete(inner) = original.bins[0].sub_grid.as_ref().unwrap() else {
+            panic!()
+        };
+        assert_eq!(inner.accumulator.new_samples, 8);
+        let Grid::Continuous(leaf) = inner.bins[0].sub_grid.as_ref().unwrap() else {
+            panic!()
+        };
+        assert_eq!(leaf.accumulator.new_samples, 8);
+    }
+
     use std::f64::consts::PI;
 
     use rand::RngCore;

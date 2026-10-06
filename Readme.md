@@ -18,6 +18,7 @@ automatically.
 - Automatic differentiation, including higher derivatives
 - Matrix operations, linear systems, and integer relations
 - Adaptive Monte Carlo integration
+- Randomized rank-one lattice integration with worker-local point generation
 
 For symbolic expressions, explore [Symbolica](https://symbolica.io).
 
@@ -98,6 +99,25 @@ fn main() {
 
 At $(1, 2, 3)$, the value is $1/6$ and the derivatives are
 $(-1/6, -1/12, -1/18)$.
+
+### Randomized lattice integration
+
+`numerical_integration::qmc` provides rank-one rules, reproducible random shifts,
+worker work packages and vector-valued estimates with covariance. The application
+controls evaluation, batching, parallelism and stopping. Errors are estimated
+from complete independent shifts rather than individual lattice points.
+
+Run `cargo run --example qmc` for serial and caller-owned threaded integration
+with identical results. The bundled Kuo rule supports up to 9,125 dimensions and
+power-of-two counts from 1,024 through 1,048,576; caller-supplied vectors allow
+other rules. The published numeric data have their own
+[provenance and Apache-2.0 notice](src/numerical_integration/qmc/data/README.md).
+No external integration package or data download is required.
+
+Enable `serde` to checkpoint plans, partially evaluated packages and merged work.
+Shift coordinates and compensated sums are encoded by their exact IEEE bits;
+ordinary JSON serializers preserve their state. Keep the canonical package size
+fixed when resuming or changing the number of workers to preserve bitwise sums.
 
 ## Development
 

@@ -1,0 +1,16 @@
+# lattice
+# A 10-dimensional base-2 generating vector for an equal weight (all one) Korobov space with optimal rate N-3 up to 2^20 = 1048576 points from Hickernell, Kritzer, Kuo and Nuyens (2011) - Weighted compound integration rules with higher order convergence for all N.
+# From the Magic Point Shop https://people.cs.kuleuven.be/~dirk.nuyens/qmc-generators/
+10 # dimensions
+1048576 # 2^20
+# coordinates of the generating vector, starting at j=1:
+1
+364981
+245389
+97823
+488939
+62609
+400749
+385317
+21281
+223487
