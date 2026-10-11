@@ -363,7 +363,12 @@ impl<T: FloatLike> ErrorPropagatingFloat<T> {
 impl<T: RealLike> fmt::Display for ErrorPropagatingFloat<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         if let Some(p) = self.get_precision() {
-            if p < 0. {
+            if p == f64::INFINITY {
+                // Unbounded reported precision has no finite decimal cutoff.
+                // Preserve the underlying formatter instead of converting
+                // infinite precision to an unrepresentable format argument.
+                Display::fmt(&self.value, f)
+            } else if p < 0. {
                 f.write_char('0')
             } else {
                 f.write_fmt(format_args!("{0:.1$}", self.value, p as usize))
