@@ -9,10 +9,100 @@ use super::{FixedPrecision, FloatLike, Real, RealLike, SingleFloat};
 use crate::domains::{integer::Integer, rational::Rational};
 
 /// A float that does linear error propagation.
+///
+/// The absolute error has the range of `f64`, even for multiprecision values.
+/// If error tracking leaves that range, the absolute error is `NaN`; numerical
+/// consumers must reject nonfinite uncertainty. This is not a certified bound.
 #[derive(Copy, Clone)]
 pub struct ErrorPropagatingFloat<T: FloatLike> {
     value: T,
     abs_err: f64,
+}
+
+// Refuse unsupported tracking instead of turning lost uncertainty into zero.
+// These helpers intentionally do not replace the range-limited error field.
+#[inline]
+fn error_add(a: f64, b: f64) -> f64 {
+    let r = a + b;
+    if !r.is_finite() || a < 0. || b < 0. {
+        f64::NAN
+    } else {
+        r
+    }
+}
+#[inline]
+fn error_mul(a: f64, b: f64) -> f64 {
+    let r = a * b.abs();
+    if !a.is_finite()
+        || a < 0.
+        || !b.is_finite()
+        || !r.is_finite()
+        || (r == 0. && a != 0. && b != 0.)
+    {
+        f64::NAN
+    } else {
+        r
+    }
+}
+#[inline]
+fn error_div(a: f64, b: f64) -> f64 {
+    let r = a / b.abs();
+    if !a.is_finite()
+        || a < 0.
+        || !b.is_finite()
+        || b == 0.
+        || !r.is_finite()
+        || (r == 0. && a != 0.)
+    {
+        f64::NAN
+    } else {
+        r
+    }
+}
+#[inline]
+fn error_power(a: f64, exponent: f64) -> f64 {
+    let r = a.powf(exponent);
+    if !a.is_finite() || a < 0. || !exponent.is_finite() || !r.is_finite() || (r == 0. && a != 0.) {
+        f64::NAN
+    } else {
+        r
+    }
+}
+#[inline]
+fn decimal_error(accuracy: f64) -> f64 {
+    if accuracy == f64::INFINITY {
+        return 0.;
+    }
+    let r = 10f64.powf(-accuracy);
+    if accuracy.is_finite() && r.is_finite() && r != 0. {
+        r
+    } else {
+        f64::NAN
+    }
+}
+#[inline]
+fn binary_error(bits: u32) -> f64 {
+    let r = 2f64.powf(-f64::from(bits));
+    if r == 0. { f64::NAN } else { r }
+}
+#[inline]
+fn tracked_scale<T: RealLike>(value: &T) -> f64 {
+    let r = value.to_f64();
+    if !r.is_finite() || (r == 0. && !value.is_zero()) {
+        f64::NAN
+    } else {
+        r
+    }
+}
+
+#[inline]
+fn rational_scale(value: &Rational) -> f64 {
+    let r = value.to_f64().abs();
+    if !r.is_finite() || (r == 0. && !value.is_zero()) {
+        f64::NAN
+    } else {
+        r
+    }
 }
 
 impl<T: FloatLike + From<f64>> From<f64> for ErrorPropagatingFloat<T> {
@@ -25,7 +115,7 @@ impl<T: FloatLike + From<f64>> From<f64> for ErrorPropagatingFloat<T> {
         } else {
             ErrorPropagatingFloat {
                 value: value.into(),
-                abs_err: f64::EPSILON * value.abs(),
+                abs_err: error_mul(f64::EPSILON, value.abs()),
             }
         }
     }
@@ -49,7 +139,7 @@ impl<T: FloatLike> Add<&ErrorPropagatingFloat<T>> for ErrorPropagatingFloat<T> {
     #[inline]
     fn add(self, rhs: &Self) -> Self::Output {
         ErrorPropagatingFloat {
-            abs_err: self.abs_err + rhs.abs_err,
+            abs_err: error_add(self.abs_err, rhs.abs_err),
             value: self.value + &rhs.value,
         }
     }
@@ -88,18 +178,18 @@ impl<T: RealLike> Mul<&ErrorPropagatingFloat<T>> for ErrorPropagatingFloat<T> {
     #[inline]
     fn mul(self, rhs: &Self) -> Self::Output {
         let value = self.value.clone() * &rhs.value;
-        let r = rhs.value.to_f64().abs();
-        let s = self.value.to_f64().abs();
+        let r = tracked_scale(&rhs.value).abs();
+        let s = tracked_scale(&self.value).abs();
 
         if s == 0. && r == 0. {
             ErrorPropagatingFloat {
                 value,
-                abs_err: self.abs_err * rhs.abs_err,
+                abs_err: error_mul(self.abs_err, rhs.abs_err),
             }
         } else {
             ErrorPropagatingFloat {
                 value,
-                abs_err: self.abs_err * r + rhs.abs_err * s,
+                abs_err: error_add(error_mul(self.abs_err, r), error_mul(rhs.abs_err, s)),
             }
         }
     }
@@ -139,7 +229,7 @@ impl<T: RealLike + Mul<Rational, Output = T>, R: Into<Rational>> Mul<R>
     fn mul(self, rhs: R) -> Self::Output {
         let rhs = rhs.into();
         ErrorPropagatingFloat {
-            abs_err: self.abs_err * rhs.to_f64().abs(),
+            abs_err: error_mul(self.abs_err, rational_scale(&rhs)),
             value: self.value * rhs,
         }
         .truncate()
@@ -155,7 +245,7 @@ impl<T: RealLike + Div<Rational, Output = T>, R: Into<Rational>> Div<R>
     fn div(self, rhs: R) -> Self::Output {
         let rhs = rhs.into();
         ErrorPropagatingFloat {
-            abs_err: self.abs_err * rhs.inv().to_f64().abs(),
+            abs_err: error_mul(self.abs_err, rational_scale(&rhs.inv())),
             value: self.value.clone() / rhs,
         }
         .truncate()
@@ -292,16 +382,16 @@ impl<T: RealLike> ErrorPropagatingFloat<T> {
     /// If the value provided is 0, the precision argument is interpreted as an accuracy (
     /// the number of digits of the absolute error).
     pub fn new(value: T, prec: f64) -> Self {
-        let r = value.to_f64().abs();
+        let r = tracked_scale(&value).abs();
 
         if r == 0. {
             ErrorPropagatingFloat {
-                abs_err: 10f64.powf(-prec),
+                abs_err: decimal_error(prec),
                 value,
             }
         } else {
             ErrorPropagatingFloat {
-                abs_err: 10f64.powf(-prec) * r,
+                abs_err: error_mul(decimal_error(prec), r),
                 value,
             }
         }
@@ -312,17 +402,17 @@ impl<T: RealLike> ErrorPropagatingFloat<T> {
     }
 
     pub fn get_relative_error(&self) -> f64 {
-        self.abs_err / self.value.to_f64().abs()
+        error_div(self.abs_err, tracked_scale(&self.value).abs())
     }
 
     /// Get the precision in number of decimal digits.
     #[inline(always)]
     pub fn get_precision(&self) -> Option<f64> {
-        let r = self.value.to_f64().abs();
+        let r = tracked_scale(&self.value).abs();
         if r == 0. {
             None
         } else {
-            Some(-(self.abs_err / r).log10())
+            Some(-error_div(self.abs_err, r).log10())
         }
     }
 
@@ -336,10 +426,13 @@ impl<T: RealLike> ErrorPropagatingFloat<T> {
     /// of the underlying float.
     #[inline(always)]
     pub fn truncate(mut self) -> Self {
-        if self.value.fixed_precision() {
-            self.abs_err = self
-                .abs_err
-                .max(self.value.get_epsilon() * self.value.to_f64());
+        if self.value.fixed_precision() && !self.abs_err.is_nan() {
+            let rounding = error_mul(self.value.get_epsilon(), tracked_scale(&self.value).abs());
+            self.abs_err = if rounding.is_nan() {
+                rounding
+            } else {
+                self.abs_err.max(rounding)
+            };
         }
         self
     }
@@ -349,7 +442,7 @@ impl<T: FloatLike> ErrorPropagatingFloat<T> {
     pub fn new_with_accuracy(value: T, acc: f64) -> Self {
         ErrorPropagatingFloat {
             value,
-            abs_err: 10f64.powf(-acc),
+            abs_err: decimal_error(acc),
         }
     }
 
@@ -429,7 +522,7 @@ impl<T: RealLike> FloatLike for ErrorPropagatingFloat<T> {
     fn zero(&self) -> Self {
         ErrorPropagatingFloat {
             value: self.value.zero(),
-            abs_err: 2f64.powf(-(self.value.get_precision() as f64)),
+            abs_err: binary_error(self.value.get_precision()),
         }
     }
 
@@ -443,32 +536,43 @@ impl<T: RealLike> FloatLike for ErrorPropagatingFloat<T> {
     fn one(&self) -> Self {
         ErrorPropagatingFloat {
             value: self.value.one(),
-            abs_err: 2f64.powf(-(self.value.get_precision() as f64)),
+            abs_err: binary_error(self.value.get_precision()),
         }
     }
 
     fn pow(&self, e: u64) -> Self {
-        let i = self.to_f64().abs();
+        let i = tracked_scale(&self.value).abs();
 
         if i == 0. {
             return ErrorPropagatingFloat {
                 value: self.value.pow(e),
-                abs_err: self.abs_err.powf(e as f64),
+                abs_err: error_power(self.abs_err, e as f64),
             };
         }
 
         let r = self.value.pow(e);
+        // A nonzero base has a nonzero integer power; native underflow must
+        // not turn its propagated uncertainty into an exact zero.
+        let scale = if r.is_zero() {
+            f64::NAN
+        } else {
+            tracked_scale(&r).abs()
+        };
         ErrorPropagatingFloat {
-            abs_err: self.abs_err * e as f64 * r.to_f64().abs() / i,
+            abs_err: error_div(error_mul(error_mul(self.abs_err, e as f64), scale), i),
             value: r,
         }
     }
 
     fn inv(&self) -> Self {
         let r = self.value.inv();
-        let rr = r.to_f64().abs();
+        let rr = if r.is_zero() {
+            f64::NAN
+        } else {
+            tracked_scale(&r).abs()
+        };
         ErrorPropagatingFloat {
-            abs_err: self.abs_err * rr * rr,
+            abs_err: error_mul(error_mul(self.abs_err, rr), rr),
             value: r,
         }
     }
@@ -476,16 +580,16 @@ impl<T: RealLike> FloatLike for ErrorPropagatingFloat<T> {
     /// Convert from a `usize`.
     fn from_usize(&self, a: usize) -> Self {
         let v = self.value.from_usize(a);
-        let r = v.to_f64().abs();
+        let r = tracked_scale(&v).abs();
         if r == 0. {
             ErrorPropagatingFloat {
                 value: v,
-                abs_err: 2f64.powf(-(self.value.get_precision() as f64)),
+                abs_err: binary_error(self.value.get_precision()),
             }
         } else {
             ErrorPropagatingFloat {
                 value: v,
-                abs_err: 2f64.powf(-(self.value.get_precision() as f64)) * r,
+                abs_err: error_mul(binary_error(self.value.get_precision()), r),
             }
         }
     }
@@ -493,16 +597,16 @@ impl<T: RealLike> FloatLike for ErrorPropagatingFloat<T> {
     /// Convert from a `i64`.
     fn from_i64(&self, a: i64) -> Self {
         let v = self.value.from_i64(a);
-        let r = v.to_f64().abs();
+        let r = tracked_scale(&v).abs();
         if r == 0. {
             ErrorPropagatingFloat {
                 value: v,
-                abs_err: 2f64.powf(-(self.value.get_precision() as f64)),
+                abs_err: binary_error(self.value.get_precision()),
             }
         } else {
             ErrorPropagatingFloat {
                 value: v,
-                abs_err: 2f64.powf(-(self.value.get_precision() as f64)) * r,
+                abs_err: error_mul(binary_error(self.value.get_precision()), r),
             }
         }
     }
@@ -515,10 +619,13 @@ impl<T: RealLike> FloatLike for ErrorPropagatingFloat<T> {
 
     fn set_precision(&mut self, precision: u32) {
         self.value.set_precision(precision);
-        // reset the tracked error to the roundoff of the value
-        let scale = self.value.to_f64().abs();
-        self.abs_err =
-            if scale == 0. { 1. } else { scale } * 2f64.powf(-(self.value.get_precision() as f64));
+        // This explicitly resets the tracked error, as documented by FloatLike.
+        // The newly assumed error must still fit the tracking representation.
+        let scale = tracked_scale(&self.value).abs();
+        self.abs_err = error_mul(
+            binary_error(self.value.get_precision()),
+            if scale == 0. { 1. } else { scale },
+        );
     }
 
     fn get_epsilon(&self) -> f64 {
@@ -533,7 +640,7 @@ impl<T: RealLike> FloatLike for ErrorPropagatingFloat<T> {
     fn sample_unit<R: Rng + ?Sized>(&self, rng: &mut R) -> Self {
         let v = self.value.sample_unit(rng);
         ErrorPropagatingFloat {
-            abs_err: self.abs_err * v.to_f64().abs(),
+            abs_err: error_mul(self.abs_err, tracked_scale(&v).abs()),
             value: v,
         }
     }
@@ -565,7 +672,7 @@ impl<T: RealLike> SingleFloat for ErrorPropagatingFloat<T> {
         } else {
             ErrorPropagatingFloat {
                 value: self.value.from_rational(rat),
-                abs_err: self.abs_err * rat.to_f64(),
+                abs_err: error_mul(self.abs_err, rational_scale(rat)),
             }
         }
     }
@@ -590,7 +697,10 @@ impl<T: Real + RealLike> Real for ErrorPropagatingFloat<T> {
     fn pi(&self) -> Self {
         let v = self.value.pi();
         ErrorPropagatingFloat {
-            abs_err: 2f64.powf(-(self.value.get_precision() as f64)) * v.to_f64(),
+            abs_err: error_mul(
+                binary_error(self.value.get_precision()),
+                tracked_scale(&v).abs(),
+            ),
             value: v,
         }
     }
@@ -598,7 +708,10 @@ impl<T: Real + RealLike> Real for ErrorPropagatingFloat<T> {
     fn e(&self) -> Self {
         let v = self.value.e();
         ErrorPropagatingFloat {
-            abs_err: 2f64.powf(-(self.value.get_precision() as f64)) * v.to_f64(),
+            abs_err: error_mul(
+                binary_error(self.value.get_precision()),
+                tracked_scale(&v).abs(),
+            ),
             value: v,
         }
     }
@@ -606,7 +719,10 @@ impl<T: Real + RealLike> Real for ErrorPropagatingFloat<T> {
     fn euler(&self) -> Self {
         let v = self.value.euler();
         ErrorPropagatingFloat {
-            abs_err: 2f64.powf(-(self.value.get_precision() as f64)) * v.to_f64(),
+            abs_err: error_mul(
+                binary_error(self.value.get_precision()),
+                tracked_scale(&v).abs(),
+            ),
             value: v,
         }
     }
@@ -614,7 +730,10 @@ impl<T: Real + RealLike> Real for ErrorPropagatingFloat<T> {
     fn phi(&self) -> Self {
         let v = self.value.phi();
         ErrorPropagatingFloat {
-            abs_err: 2f64.powf(-(self.value.get_precision() as f64)) * v.to_f64(),
+            abs_err: error_mul(
+                binary_error(self.value.get_precision()),
+                tracked_scale(&v).abs(),
+            ),
             value: v,
         }
     }
@@ -623,7 +742,7 @@ impl<T: Real + RealLike> Real for ErrorPropagatingFloat<T> {
     fn i(&self) -> Option<Self> {
         Some(ErrorPropagatingFloat {
             value: self.value.i()?,
-            abs_err: 2f64.powf(-(self.value.get_precision() as f64)),
+            abs_err: binary_error(self.value.get_precision()),
         })
     }
 
@@ -643,10 +762,10 @@ impl<T: Real + RealLike> Real for ErrorPropagatingFloat<T> {
 
     fn sqrt(&self) -> Self {
         let v = self.value.sqrt();
-        let r = v.to_f64().abs();
+        let r = tracked_scale(&v).abs();
 
         ErrorPropagatingFloat {
-            abs_err: self.abs_err / (2. * r),
+            abs_err: error_div(self.abs_err, error_mul(2., r)),
             value: v,
         }
         .truncate()
@@ -655,7 +774,7 @@ impl<T: Real + RealLike> Real for ErrorPropagatingFloat<T> {
     fn log(&self) -> Self {
         let r = self.value.log();
         ErrorPropagatingFloat {
-            abs_err: self.abs_err / self.value.to_f64().abs(),
+            abs_err: error_div(self.abs_err, tracked_scale(&self.value).abs()),
             value: r,
         }
         .truncate()
@@ -663,8 +782,13 @@ impl<T: Real + RealLike> Real for ErrorPropagatingFloat<T> {
 
     fn exp(&self) -> Self {
         let v = self.value.exp();
+        let scale = if v.is_zero() {
+            f64::NAN
+        } else {
+            tracked_scale(&v).abs()
+        };
         ErrorPropagatingFloat {
-            abs_err: v.to_f64().abs() * self.abs_err,
+            abs_err: error_mul(self.abs_err, scale),
             value: v,
         }
         .truncate()
@@ -672,7 +796,7 @@ impl<T: Real + RealLike> Real for ErrorPropagatingFloat<T> {
 
     fn sin(&self) -> Self {
         ErrorPropagatingFloat {
-            abs_err: self.abs_err * self.value.to_f64().cos().abs(),
+            abs_err: error_mul(self.abs_err, tracked_scale(&self.value).cos().abs()),
             value: self.value.sin(),
         }
         .truncate()
@@ -680,7 +804,7 @@ impl<T: Real + RealLike> Real for ErrorPropagatingFloat<T> {
 
     fn cos(&self) -> Self {
         ErrorPropagatingFloat {
-            abs_err: self.abs_err * self.value.to_f64().sin().abs(),
+            abs_err: error_mul(self.abs_err, tracked_scale(&self.value).sin().abs()),
             value: self.value.cos(),
         }
         .truncate()
@@ -688,32 +812,32 @@ impl<T: Real + RealLike> Real for ErrorPropagatingFloat<T> {
 
     fn tan(&self) -> Self {
         let t = self.value.tan();
-        let tt = t.to_f64().abs();
+        let tt = tracked_scale(&t).abs();
 
         ErrorPropagatingFloat {
-            abs_err: self.abs_err * (1. + tt * tt),
+            abs_err: error_mul(self.abs_err, 1. + error_mul(tt, tt)),
             value: t,
         }
         .truncate()
     }
 
     fn asin(&self) -> Self {
-        let v = self.value.to_f64();
+        let v = tracked_scale(&self.value);
         let t = self.value.asin();
-        let tt = (1. - v * v).sqrt();
+        let tt = (1. - error_mul(v.abs(), v)).sqrt();
         ErrorPropagatingFloat {
-            abs_err: self.abs_err / tt,
+            abs_err: error_div(self.abs_err, tt),
             value: t,
         }
         .truncate()
     }
 
     fn acos(&self) -> Self {
-        let v = self.value.to_f64();
+        let v = tracked_scale(&self.value);
         let t = self.value.acos();
-        let tt = (1. - v * v).sqrt();
+        let tt = (1. - error_mul(v.abs(), v)).sqrt();
         ErrorPropagatingFloat {
-            abs_err: self.abs_err / tt,
+            abs_err: error_div(self.abs_err, tt),
             value: t,
         }
         .truncate()
@@ -722,11 +846,11 @@ impl<T: Real + RealLike> Real for ErrorPropagatingFloat<T> {
     fn atan2(&self, x: &Self) -> Self {
         let t = self.value.atan2(&x.value);
         let r = self.clone() / x;
-        let r2 = r.value.to_f64().abs();
+        let r2 = tracked_scale(&r.value).abs();
 
-        let tt = 1. + r2 * r2;
+        let tt = 1. + error_mul(r2, r2);
         ErrorPropagatingFloat {
-            abs_err: r.abs_err / tt,
+            abs_err: error_div(r.abs_err, tt),
             value: t,
         }
         .truncate()
@@ -734,7 +858,7 @@ impl<T: Real + RealLike> Real for ErrorPropagatingFloat<T> {
 
     fn sinh(&self) -> Self {
         ErrorPropagatingFloat {
-            abs_err: self.abs_err * self.value.cosh().to_f64().abs(),
+            abs_err: error_mul(self.abs_err, tracked_scale(&self.value.cosh()).abs()),
             value: self.value.sinh(),
         }
         .truncate()
@@ -742,7 +866,7 @@ impl<T: Real + RealLike> Real for ErrorPropagatingFloat<T> {
 
     fn cosh(&self) -> Self {
         ErrorPropagatingFloat {
-            abs_err: self.abs_err * self.value.sinh().to_f64().abs(),
+            abs_err: error_mul(self.abs_err, tracked_scale(&self.value.sinh()).abs()),
             value: self.value.cosh(),
         }
         .truncate()
@@ -750,62 +874,83 @@ impl<T: Real + RealLike> Real for ErrorPropagatingFloat<T> {
 
     fn tanh(&self) -> Self {
         let t = self.value.tanh();
-        let tt = t.clone().to_f64().abs();
+        // 1 - tanh(x)^2 can round to zero while the native derivative is
+        // nonzero. The equivalent cosh denominator avoids that cancellation.
+        let c = tracked_scale(&self.value.cosh()).abs();
         ErrorPropagatingFloat {
-            abs_err: self.abs_err * (1. - tt * tt),
+            abs_err: error_div(error_div(self.abs_err, c), c),
             value: t,
         }
         .truncate()
     }
 
     fn asinh(&self) -> Self {
-        let v = self.value.to_f64();
+        let v = tracked_scale(&self.value);
         let t = self.value.asinh();
-        let tt = (1. + v * v).sqrt();
+        let tt = (1. + error_mul(v.abs(), v)).sqrt();
         ErrorPropagatingFloat {
-            abs_err: self.abs_err / tt,
+            abs_err: error_div(self.abs_err, tt),
             value: t,
         }
         .truncate()
     }
 
     fn acosh(&self) -> Self {
-        let v = self.value.to_f64();
+        let v = tracked_scale(&self.value);
         let t = self.value.acosh();
-        let tt = (v * v - 1.).sqrt();
+        let tt = (error_mul(v.abs(), v) - 1.).sqrt();
         ErrorPropagatingFloat {
-            abs_err: self.abs_err / tt,
+            abs_err: error_div(self.abs_err, tt),
             value: t,
         }
         .truncate()
     }
 
     fn atanh(&self) -> Self {
-        let v = self.value.to_f64();
+        let v = tracked_scale(&self.value);
         let t = self.value.atanh();
-        let tt = 1. - v * v;
+        let tt = 1. - error_mul(v.abs(), v);
         ErrorPropagatingFloat {
-            abs_err: self.abs_err / tt,
+            abs_err: error_div(self.abs_err, tt),
             value: t,
         }
         .truncate()
     }
 
     fn powf(&self, e: &Self) -> Self {
-        let i = self.to_f64().abs();
+        let i = tracked_scale(&self.value).abs();
 
         if i == 0. {
             return ErrorPropagatingFloat {
                 value: self.value.powf(&e.value),
-                abs_err: 0.,
+                abs_err: if self.abs_err == 0. && e.abs_err == 0. {
+                    0.
+                } else {
+                    f64::NAN
+                },
             };
         }
 
         let r = self.value.powf(&e.value);
+        let scale = if r.is_zero() {
+            f64::NAN
+        } else {
+            tracked_scale(&r).abs()
+        };
         ErrorPropagatingFloat {
-            abs_err: (self.abs_err * e.value.to_f64() + i * e.abs_err * i.ln().abs())
-                * r.to_f64().abs()
-                / i,
+            abs_err: error_div(
+                error_mul(
+                    error_add(
+                        error_mul(self.abs_err, tracked_scale(&e.value).abs()),
+                        error_mul(
+                            error_mul(e.abs_err, i),
+                            tracked_scale(&self.value.norm().log()).abs(),
+                        ),
+                    ),
+                    scale,
+                ),
+                i,
+            ),
             value: r,
         }
         .truncate()
