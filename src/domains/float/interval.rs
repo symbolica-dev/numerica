@@ -14,8 +14,9 @@ use crate::domains::{InternalOrdering, integer::Integer, rational::Rational};
 ///
 /// The ball represents all numbers in `[center - radius, center + radius]`.
 /// Addition, subtraction, multiplication, division, and inversion use directed
-/// rounding and return certified enclosures. Other operations are not
-/// currently certifying.
+/// rounding and return certified enclosures. [`Real::pi`] also returns a
+/// certified enclosure, including its rounding error. Other transcendental
+/// operations are not currently certifying.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "bincode", derive(bincode::Encode, bincode::Decode))]
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -595,6 +596,13 @@ impl RealLike for RealBall {
 
 impl Real for RealBall {
     fn pi(&self) -> Self {
+        // Both MPFR and Astro return pi rounded to nearest at at least p bits.
+        // Since 2 <= c <= 4 for the rounded center c, its absolute rounding
+        // error is at most 2^(1-p). from_rounded_value rounds c * 2^-p upward,
+        // which is at least that error bound. The endpoint operations round
+        // outward, so the resulting finite ball encloses the exact pi.
+        // This argument is specific to pi, not a certification of the other
+        // constants or transcendental functions using this helper.
         Self::from_rounded_value(self.center.pi(), self.get_precision())
     }
 
@@ -832,6 +840,38 @@ mod tests {
         let actual_upper = ball.upper_bound().to_rational();
         assert!(actual_lower <= *lower, "{actual_lower} > {lower}");
         assert!(actual_upper >= *upper, "{actual_upper} < {upper}");
+    }
+
+    #[test]
+    fn pi_enclosure_covers_the_native_rounding_bound() {
+        // Exercise sub-word and word-boundary precisions too: Astro can round
+        // the requested precision up, while MPFR uses the requested precision.
+        for requested in [2, 3, 8, 24, 53, 63, 64, 65, 128, 256, 1024] {
+            let context = RealBall::exact(Float::with_val(requested, 0));
+            let precision = context.get_precision();
+            let pi = context.pi();
+            assert!(pi.is_finite() && pi.is_strictly_positive());
+            let center = pi.center.to_rational();
+            assert!(Rational::from(2) <= center && center <= Rational::from(4));
+            let error = Rational::from((
+                Integer::one(),
+                Integer::from(2).pow(u64::from(precision - 1)),
+            ));
+            assert!(pi.radius.to_rational() >= error);
+            assert_encloses(&pi, &(&center - &error), &(&center + &error));
+        }
+    }
+
+    #[test]
+    fn pi_enclosure_contains_a_higher_precision_enclosure() {
+        let reference = RealBall::exact(Float::with_val(1536, 0)).pi();
+        assert!(reference.is_finite() && reference.is_strictly_positive());
+        for precision in [2, 3, 8, 24, 53, 63, 64, 65, 128, 256, 1024] {
+            let pi = RealBall::exact(Float::with_val(precision, 0)).pi();
+            assert!(pi.contains_ball(&reference));
+            // A rounded center alone must not be mistaken for the enclosure.
+            assert!(!RealBall::exact(pi.center.clone()).contains_ball(&reference));
+        }
     }
 
     #[test]
