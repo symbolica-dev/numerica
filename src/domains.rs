@@ -161,7 +161,9 @@ pub trait Ring:
     fn zero(&self) -> Self::Element;
     /// Return the multiplicative identity `1`.
     fn one(&self) -> Self::Element;
-    /// Return the nth element by computing `n * 1`.
+    /// Embed the integer `n` as `n * 1`.
+    ///
+    /// In a field extension, the result lies in its prime subfield.
     fn nth(&self, n: Integer) -> Self::Element;
     /// Uniformly sample a small integer from an inclusive range and embed it in this ring.
     ///
@@ -317,6 +319,47 @@ pub trait SampleableRing: Ring {
         rng: &mut R,
         policy: &Self::SamplingPolicy,
     ) -> Self::Element;
+
+    /// Sample according to `policy`, conditioned on the result being nonzero.
+    ///
+    /// The policy must give nonzero elements positive probability.
+    ///
+    /// ```
+    /// use numerica::domains::{Ring, SampleableRing, finite_field::Zp};
+    /// let field = Zp::new(17);
+    /// let value = field.sample_nonzero(&mut rand::rng(), &Default::default());
+    /// assert!(!field.is_zero(&value));
+    /// ```
+    fn sample_nonzero<R: RngCore + ?Sized>(
+        &self,
+        rng: &mut R,
+        policy: &Self::SamplingPolicy,
+    ) -> Self::Element {
+        loop {
+            let sample = self.sample(rng, policy);
+            if !self.is_zero(&sample) {
+                return sample;
+            }
+        }
+    }
+}
+
+/// A finite ring whose elements can be sampled uniformly.
+pub trait UniformlySampleableRing: SampleableRing {
+    /// Return a policy that gives every ring element equal probability.
+    fn uniform_sampling_policy(&self) -> Self::SamplingPolicy;
+
+    /// Uniformly sample any element, including zero.
+    fn sample_uniform<R: RngCore + ?Sized>(&self, rng: &mut R) -> Self::Element {
+        self.sample(rng, &self.uniform_sampling_policy())
+    }
+
+    /// Uniformly sample a nonzero element.
+    ///
+    /// The ring must contain at least one nonzero element.
+    fn sample_uniform_nonzero<R: RngCore + ?Sized>(&self, rng: &mut R) -> Self::Element {
+        self.sample_nonzero(rng, &self.uniform_sampling_policy())
+    }
 }
 
 /// A ring equipped with a total order compatible with its ring operations.

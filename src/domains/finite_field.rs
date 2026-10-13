@@ -19,7 +19,9 @@ use crate::kernels::RingKernels;
 use crate::printer::{PrintOptions, PrintState};
 
 use super::integer::Z;
-use super::{EuclideanDomain, Field, InternalOrdering, Ring, SampleableRing};
+use super::{
+    EuclideanDomain, Field, InternalOrdering, Ring, SampleableRing, UniformlySampleableRing,
+};
 
 const HENSEL_LIFTING_MASK: [u8; 128] = [
     255, 85, 51, 73, 199, 93, 59, 17, 15, 229, 195, 89, 215, 237, 203, 33, 31, 117, 83, 105, 231,
@@ -35,6 +37,41 @@ const HENSEL_LIFTING_MASK: [u8; 128] = [
 pub type Zp = FiniteField<u32>;
 /// A 64-bit integer finite field.
 pub type Zp64 = FiniteField<u64>;
+
+/// Distribution over canonical representatives of a finite field.
+///
+/// Convert inclusive ranges (`start..=end`) or half-open ranges (`start..end`)
+/// with `.into()`. Half-open ranges exclude `end`.
+///
+/// ```
+/// use numerica::domains::{SampleableRing, finite_field::{FiniteFieldCore, Zp}};
+/// let field = Zp::new(17);
+/// let value = field.sample(&mut rand::rng(), &(3..7).into());
+/// assert!((3..7).contains(&field.from_element(&value)));
+/// ```
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum FiniteFieldSamplingPolicy {
+    /// Uniformly sample the entire field, including zero.
+    #[default]
+    Full,
+    /// Uniformly sample the intersection of this range with `[0, p)`.
+    ///
+    /// Sampling panics if the intersection is empty.
+    Range(std::ops::RangeInclusive<Integer>),
+}
+
+impl<T: Into<Integer>> From<std::ops::RangeInclusive<T>> for FiniteFieldSamplingPolicy {
+    fn from(range: std::ops::RangeInclusive<T>) -> Self {
+        let (lower, upper) = range.into_inner();
+        Self::Range(lower.into()..=upper.into())
+    }
+}
+
+impl<T: Into<Integer>> From<std::ops::Range<T>> for FiniteFieldSamplingPolicy {
+    fn from(range: std::ops::Range<T>) -> Self {
+        Self::Range(range.start.into()..=range.end.into() - Integer::one())
+    }
+}
 
 pub trait ToFiniteField<UField: FiniteFieldWorkspace>
 where
@@ -171,11 +208,20 @@ pub struct FiniteField<UField> {
     is_prime: bool,
 }
 
+impl<UField: FiniteFieldWorkspace> UniformlySampleableRing for FiniteField<UField>
+where
+    Self: Ring,
+{
+    fn uniform_sampling_policy(&self) -> Self::SamplingPolicy {
+        FiniteFieldSamplingPolicy::Full
+    }
+}
+
 impl<UField: FiniteFieldWorkspace> SampleableRing for FiniteField<UField>
 where
     Self: Ring,
 {
-    type SamplingPolicy = std::ops::RangeInclusive<i64>;
+    type SamplingPolicy = FiniteFieldSamplingPolicy;
 
     #[inline]
     fn sample<R: rand::RngCore + ?Sized>(
@@ -183,14 +229,23 @@ where
         rng: &mut R,
         policy: &Self::SamplingPolicy,
     ) -> Self::Element {
-        let characteristic = self.characteristic().to_i64().unwrap_or(i64::MAX);
-        let lower = (*policy.start()).max(0);
-        let upper = (*policy.end()).min(characteristic.saturating_sub(1));
+        let max = self.characteristic() - Integer::one();
+        let (lower, upper) = match policy {
+            FiniteFieldSamplingPolicy::Full => (Integer::zero(), max),
+            FiniteFieldSamplingPolicy::Range(range) => (
+                range.start().clone().max(Integer::zero()),
+                range.end().clone().min(max),
+            ),
+        };
         assert!(
             lower <= upper,
             "sampling policy has no field representatives"
         );
-        self.nth(rng.random_range(lower..=upper).into())
+        if let (Some(lower), Some(upper)) = (lower.to_u64(), upper.to_u64()) {
+            self.nth(rng.random_range(lower..=upper).into())
+        } else {
+            self.nth(Z.sample(rng, &(lower..=upper)))
+        }
     }
 }
 
@@ -3891,9 +3946,10 @@ mod test {
 
     use super::{FiniteFieldCore, FiniteFieldElement, Zp};
     use crate::domains::{
-        Field, Ring, RingOps, SampleableRing,
+        Field, Ring, RingOps, SampleableRing, UniformlySampleableRing,
         finite_field::{
-            FiniteField, PrimitiveRootIterator, Zp64, Zp64DiscreteLogContext, ZpDiscreteLogContext,
+            FiniteField, PrimitiveRootIterator, Z2, Zp64, Zp64DiscreteLogContext,
+            ZpDiscreteLogContext,
         },
         integer::{Integer, MultiPrecisionInteger},
     };
@@ -3908,13 +3964,144 @@ mod test {
         let mut seen = [false; 3];
 
         for _ in 0..1000 {
-            let sample = field.sample(&mut rng, &(1..=49_999));
+            let sample = field.sample(&mut rng, &(1..=49_999).into());
             let value = field.to_integer(&sample).to_i64().unwrap() as usize;
             assert_ne!(value, 0);
             seen[value] = true;
         }
 
         assert_eq!(seen, [false, true, true]);
+    }
+
+    #[test]
+    fn sampling_policy_default_covers_the_whole_field() {
+        let field = Zp::new(3);
+        let mut rng = StdRng::seed_from_u64(2);
+        let mut seen = [false; 3];
+        for _ in 0..100 {
+            let value = field.from_element(&field.sample(&mut rng, &Default::default()));
+            seen[value as usize] = true;
+        }
+        assert_eq!(seen, [true; 3]);
+    }
+
+    #[test]
+    fn sampling_nonzero_covers_all_nonzero_representatives() {
+        let field = Zp::new(3);
+        let mut rng = StdRng::seed_from_u64(3);
+        let mut seen = [false; 3];
+        for _ in 0..100 {
+            let value = field.from_element(&field.sample_uniform_nonzero(&mut rng));
+            assert_ne!(value, 0);
+            seen[value as usize] = true;
+            assert!(Z2.is_one(&Z2.sample_uniform_nonzero(&mut rng)));
+        }
+        assert_eq!(seen, [false, true, true]);
+    }
+
+    #[test]
+    fn sampling_policy_half_open_ranges_exclude_the_upper_bound() {
+        let field = Zp::new(17);
+        let mut rng = StdRng::seed_from_u64(8);
+        let policy = (3..7).into();
+        let mut seen = [false; 4];
+        for _ in 0..100 {
+            let value = field.from_element(&field.sample(&mut rng, &policy));
+            assert!((3..7).contains(&value));
+            seen[(value - 3) as usize] = true;
+        }
+        assert_eq!(seen, [true; 4]);
+        assert!(field.is_zero(&field.sample(&mut rng, &(i64::MIN..1).into())));
+        assert_eq!(
+            field.from_element(&field.sample(&mut rng, &(16..u64::MAX).into())),
+            16
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "sampling policy has no field representatives")]
+    fn sampling_policy_rejects_empty_half_open_ranges() {
+        Zp::new(3).sample(&mut StdRng::seed_from_u64(9), &(0u64..0).into());
+    }
+
+    #[test]
+    #[should_panic(expected = "sampling policy has no field representatives")]
+    fn sampling_policy_half_open_minimum_bound_does_not_overflow() {
+        Zp::new(3).sample(&mut StdRng::seed_from_u64(10), &(i64::MIN..i64::MIN).into());
+    }
+
+    #[test]
+    fn sampling_policy_supports_full_u64_representatives() {
+        let prime = 18_446_744_073_709_551_557;
+        let field = Zp64::new(prime);
+        let mut rng = StdRng::seed_from_u64(4);
+        for nonzero in [false, true] {
+            let mut seen_above_i64 = false;
+            for _ in 0..100 {
+                let sample = if nonzero {
+                    field.sample_uniform_nonzero(&mut rng)
+                } else {
+                    field.sample_uniform(&mut rng)
+                };
+                let value = field.from_element(&sample);
+                assert!(value < prime);
+                if nonzero {
+                    assert_ne!(value, 0);
+                }
+                seen_above_i64 |= value > i64::MAX as u64;
+            }
+            assert!(seen_above_i64);
+        }
+        for policy in [(prime - 1..=u64::MAX).into(), (prime - 1..prime).into()] {
+            assert_eq!(
+                field.from_element(&field.sample(&mut rng, &policy)),
+                prime - 1
+            );
+        }
+    }
+
+    #[test]
+    fn sampling_policy_supports_arbitrary_precision_representatives() {
+        let prime = Integer::from(MultiPrecisionInteger::from(1) << 521u32) - Integer::one();
+        let field = FiniteField::<Integer>::new(prime.clone());
+        let mut rng = StdRng::seed_from_u64(5);
+        for nonzero in [false, true] {
+            let mut seen_above_u64 = false;
+            for _ in 0..100 {
+                let sample = if nonzero {
+                    field.sample_uniform_nonzero(&mut rng)
+                } else {
+                    field.sample_uniform(&mut rng)
+                };
+                let value = field.from_element(&sample);
+                assert!(value >= Integer::zero() && value < prime);
+                if nonzero {
+                    assert!(!value.is_zero());
+                }
+                seen_above_u64 |= value > Integer::from(u64::MAX);
+            }
+            assert!(seen_above_u64);
+        }
+        let last = &prime - Integer::one();
+        for policy in [
+            (last.clone()..=prime.clone()).into(),
+            (last.clone()..prime).into(),
+        ] {
+            assert_eq!(field.from_element(&field.sample(&mut rng, &policy)), last);
+        }
+    }
+
+    #[test]
+    fn sampling_policy_clips_negative_bounds() {
+        let field = Zp::new(3);
+        let mut rng = StdRng::seed_from_u64(6);
+        assert!(field.is_zero(&field.sample(&mut rng, &(-10..=0).into())));
+    }
+
+    #[test]
+    #[should_panic(expected = "sampling policy has no field representatives")]
+    fn sampling_policy_rejects_empty_intersections() {
+        Zp::new(3).sample(&mut StdRng::seed_from_u64(7), &(3..=10).into());
     }
 
     #[test]
