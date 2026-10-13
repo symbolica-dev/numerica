@@ -960,25 +960,30 @@ impl Integer {
 
     #[inline]
     fn shl_usize(&self, rhs: usize) -> Integer {
+        // checked_shl only checks the shift distance. Recovering the original
+        // value with an arithmetic right shift also checks signed overflow.
         match self {
             Integer::Single(n) => {
                 if rhs < i64::BITS as usize
-                    && let Some(n) = n.checked_shl(rhs as u32)
+                    && let Some(shifted) = n.checked_shl(rhs as u32)
+                    && shifted >> rhs == *n
                 {
-                    Integer::Single(n)
+                    Integer::Single(shifted)
                 } else if rhs < i128::BITS as usize
-                    && let Some(n) = (*n as i128).checked_shl(rhs as u32)
+                    && let Some(shifted) = (*n as i128).checked_shl(rhs as u32)
+                    && shifted >> rhs == *n as i128
                 {
-                    Integer::from_double(n)
+                    Integer::from_double(shifted)
                 } else {
                     Integer::from(MultiPrecisionInteger::from(*n) << rhs)
                 }
             }
             Integer::Double(n) => {
                 if rhs < i128::BITS as usize
-                    && let Some(n) = n.get().checked_shl(rhs as u32)
+                    && let Some(shifted) = n.get().checked_shl(rhs as u32)
+                    && shifted >> rhs == n.get()
                 {
-                    Integer::from_double(n)
+                    Integer::from_double(shifted)
                 } else {
                     Integer::from(MultiPrecisionInteger::from(n.get()) << rhs)
                 }
@@ -5215,6 +5220,37 @@ mod test {
         assigned <<= 130u32;
         assigned >>= 130u32;
         assert_eq!(assigned, Integer::from(7));
+    }
+
+    #[test]
+    fn integer_left_shifts_preserve_value() {
+        let values = [
+            Integer::from(0),
+            Integer::from(1),
+            Integer::from(-1),
+            Integer::from(3),
+            Integer::from(-3),
+            Integer::from(i64::MAX),
+            Integer::from(i64::MIN),
+            Integer::from(i64::MAX as i128 + 1),
+            Integer::from(i64::MIN as i128 - 1),
+            Integer::from(i128::MAX),
+            Integer::from(i128::MIN),
+            Integer::from(MultiPrecisionInteger::from(1) << 200usize),
+            Integer::from(-(MultiPrecisionInteger::from(1) << 200usize)),
+        ];
+        for value in values {
+            for shift in [
+                0usize, 1, 2, 31, 62, 63, 64, 65, 100, 126, 127, 128, 129, 255,
+            ] {
+                let expected = Integer::from(value.clone().to_multi_prec() << shift);
+                assert_eq!(&value << shift, expected, "borrowed {value} << {shift}");
+                assert_eq!(value.clone() << shift, expected, "owned {value} << {shift}");
+                let mut assigned = value.clone();
+                assigned <<= shift;
+                assert_eq!(assigned, expected, "assigned {value} << {shift}");
+            }
+        }
     }
 
     #[test]
