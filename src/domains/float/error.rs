@@ -641,6 +641,24 @@ impl<T: Real + RealLike> Real for ErrorPropagatingFloat<T> {
         }
     }
 
+    fn hypot(&self, other: &Self) -> Self {
+        let value = self.value.hypot(&other.value);
+        if value.is_zero() || !value.is_finite() {
+            // Keep the existing arithmetic at the nondifferentiable origin and
+            // for exceptional inputs, without inventing an uncertainty bound.
+            return (self.clone() * self + other.clone() * other).sqrt();
+        }
+        // Form bounded derivative weights in the original numeric domain.
+        // Squaring either input first can overflow or underflow unnecessarily.
+        let x_weight = (self.value.clone() / &value).to_f64().abs();
+        let y_weight = (other.value.clone() / &value).to_f64().abs();
+        ErrorPropagatingFloat {
+            abs_err: self.abs_err * x_weight + other.abs_err * y_weight,
+            value,
+        }
+        .truncate()
+    }
+
     fn sqrt(&self) -> Self {
         let v = self.value.sqrt();
         let r = v.to_f64().abs();
@@ -815,4 +833,57 @@ impl<T: Real + RealLike> Real for ErrorPropagatingFloat<T> {
 impl<T: FloatLike + FixedPrecision> FixedPrecision for ErrorPropagatingFloat<T> {
     const BINARY_PRECISION: usize = T::BINARY_PRECISION;
     const DECIMAL_PRECISION: usize = T::DECIMAL_PRECISION;
+}
+
+#[cfg(test)]
+mod hypot_tests {
+    use crate::domains::float::{
+        Complex, DoubleFloat, ErrorPropagatingFloat, Float, FloatLike, Real, RealLike, SingleFloat,
+    };
+
+    fn tracked<T: FloatLike>(value: T, accuracy: f64) -> ErrorPropagatingFloat<T> {
+        ErrorPropagatingFloat::new_with_accuracy(value, accuracy)
+    }
+
+    fn scaled_hypot<T: Real + RealLike>(one: T) {
+        let big = one.from_usize(10).pow(200);
+        let tiny = big.inv();
+        for scale in [big, tiny] {
+            for sign in [1, -1] {
+                let x = scale.clone() * one.from_i64(sign);
+                let y = scale.clone() * one.from_usize(2);
+                let expected = x.hypot(&y);
+                let a = tracked(x, 220.);
+                let b = tracked(y, 220.);
+                let value = a.hypot(&b);
+                assert!(value.is_finite());
+                assert!(((value.get_num().clone() / &expected).to_f64() - 1.).abs() < 1e-14);
+                assert!(value.get_absolute_error() > 0.);
+                let reversed = b.hypot(&a);
+                assert!(((reversed.get_num().clone() / &expected).to_f64() - 1.).abs() < 1e-14);
+                let norm = Complex::new(a, b).norm();
+                assert!(norm.re.is_finite());
+                assert!(((norm.re.get_num().clone() / &expected).to_f64() - 1.).abs() < 1e-14);
+            }
+        }
+    }
+
+    #[test]
+    fn tracked_hypot_uses_existing_scaled_native_arithmetic() {
+        scaled_hypot(1_f64);
+        scaled_hypot(DoubleFloat::from(1.));
+        scaled_hypot(Float::with_val(192, 1));
+    }
+
+    #[test]
+    fn tracked_hypot_retains_local_uncertainty() {
+        let value = tracked(3_f64, 6.).hypot(&tracked(4., 6.));
+        assert_eq!(*value.get_num(), 5.);
+        // Existing linear propagation can overestimate shared intermediates, but
+        // must retain both first derivatives, 3/5 and 4/5.
+        assert!(value.get_absolute_error() >= 1.4e-6 * (1. - 1e-14));
+        let value = tracked(3_f64, 6.).hypot(&tracked(0., 6.));
+        assert_eq!(*value.get_num(), 3.);
+        assert!(value.get_absolute_error() >= 1e-6);
+    }
 }
