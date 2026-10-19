@@ -177,6 +177,21 @@ pub trait Ring:
         sum
     }
 
+    /// Multiply owned elements, returning one for an empty iterator.
+    fn product<I>(&self, elements: I) -> Self::Element
+    where
+        I: IntoIterator<Item = Self::Element>,
+    {
+        let mut elements = elements.into_iter();
+        let Some(mut product) = elements.next() else {
+            return self.one();
+        };
+        for element in elements {
+            self.mul_assign(&mut product, element);
+        }
+        product
+    }
+
     /// Embed the integer `n` as `n * 1`.
     ///
     /// In a field extension, the result lies in its prime subfield.
@@ -762,11 +777,15 @@ mod tests {
     };
 
     #[test]
-    fn ring_sum_uses_the_identity_and_owned_elements() {
+    fn ring_sum_and_product_use_their_identities_and_owned_elements() {
         assert_eq!(Z.sum([]), Integer::from(0));
+        assert_eq!(Z.product([]), Integer::from(1));
         assert_eq!(Z.sum([Integer::from(7)]), Integer::from(7));
+        assert_eq!(Z.product([Integer::from(7)]), Integer::from(7));
         let values = [(1, 2), (2, 3), (3, 4)].map(Rational::from);
-        assert_eq!(Q.sum(values), Rational::from((23, 12)));
+        assert_eq!(Q.sum(values.clone()), Rational::from((23, 12)));
+        assert_eq!(Q.product(values), Rational::from((1, 4)));
+        assert_eq!(Z.product([1.into(), 0.into(), 3.into()]), Integer::from(0));
     }
 
     #[test]
