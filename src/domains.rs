@@ -270,6 +270,21 @@ pub trait Ring:
         RingKernels::empty()
     }
 
+    /// Add several coefficient products to one accumulator.
+    ///
+    /// Domains can override this to amortize reduction or representation changes
+    /// over the complete chain. An empty chain leaves the accumulator unchanged.
+    #[inline]
+    fn add_mul_assign_many<'a, I>(&self, accumulator: &mut Self::Element, products: I)
+    where
+        Self::Element: 'a,
+        I: IntoIterator<Item = (&'a Self::Element, &'a Self::Element)>,
+    {
+        for (left, right) in products {
+            self.add_mul_assign(accumulator, left, right);
+        }
+    }
+
     /// Subtract several coefficient products from one accumulator.
     ///
     /// Domains with tagged or multiprecision elements can override this to select the
