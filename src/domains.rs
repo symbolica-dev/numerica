@@ -294,6 +294,18 @@ pub trait Ring:
         f: &mut W,
     ) -> Result<bool, Error>;
 
+    /// Format a coefficient as a MathML fragment. Structural domains can
+    /// override this; the default safely preserves the exact domain notation.
+    fn format_mathml<W: std::fmt::Write>(
+        &self,
+        element: &Self::Element,
+        opts: &PrintOptions,
+        state: PrintState,
+        f: &mut W,
+    ) -> Result<bool, Error> {
+        crate::printer::mathml::coefficient(self, element, opts, state, f)
+    }
+
     /// Whether the ring does not contain additional information
     /// that cannot be inferred from any element of the ring.
     /// For example, [Z](type@integer::Z) and [Q](type@rational::Q) have independent elements,
